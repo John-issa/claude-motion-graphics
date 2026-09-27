@@ -1,0 +1,18 @@
+{
+  "name": "claude-motion-graphics",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "A deterministic motion graphics engine and showreel, rendered live in the browser.",
+  "scripts": {
+    "dev": "node scripts/serve.mjs",
+    "build": "node scripts/build.mjs",
+    "snap": "node scripts/snap.mjs",
+    "render": "node scripts/render.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.10",
+    "playwright": "1.56.1"
+  }
+}
