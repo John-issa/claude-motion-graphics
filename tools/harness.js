@@ -90,7 +90,7 @@ window.__bench = ({ scene, width = 1280, frames = 60, from = 0, to } = {}) => {
   }
   const sorted = [...times].sort((a, b) => a - b);
   const q = (x) => sorted[Math.min(sorted.length - 1, Math.floor(x * sorted.length))];
-  return { width, frames, median: q(0.5), p95: q(0.95), max: sorted[sorted.length - 1], mean: times.reduce((a, b) => a + b, 0) / times.length };
+  return { width, frames, min: sorted[0], p25: q(0.25), median: q(0.5), p95: q(0.95), max: sorted[sorted.length - 1], mean: times.reduce((a, b) => a + b, 0) / times.length };
 };
 
 function frameHash(canvas) {

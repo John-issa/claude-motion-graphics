@@ -13,6 +13,7 @@
 // Exits non-zero if the page logged errors, so problems can't go unnoticed.
 
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { chromium } from 'playwright';
 import { startServer, ROOT } from './serve.mjs';
@@ -91,7 +92,15 @@ async function main() {
     if (args.bench) {
       const width = Number(args.width || 1280);
       const res = await page.evaluate((o) => window.__bench(o), { scene, width, frames: Number(args.frames || 60) });
-      console.log(JSON.stringify({ scene: tag, ...Object.fromEntries(Object.entries(res).map(([k, v]) => [k, Math.round(v * 100) / 100])) }, null, 2));
+      const load = os.loadavg()[0];
+      const cpus = os.cpus().length;
+      const report = { scene: tag, ...Object.fromEntries(Object.entries(res).map(([k, v]) => [k, Math.round(v * 100) / 100])), load: Math.round(load * 100) / 100, cpus };
+      if (load > cpus * 0.5) {
+        report.note = `Measured under load ${load.toFixed(1)} on ${cpus} cores (other agents share this machine), so medians read high. ` +
+          'Judge cost by p25/min; a median within 1.5x of the budget under this load is acceptable. ' +
+          'Do not spend more time on benchmark methodology.';
+      }
+      console.log(JSON.stringify(report, null, 2));
     } else if (args.audit) {
       const res = await page.evaluate((o) => window.__audit(o), { scene, samples: Number(args.samples || 16) });
       console.log(JSON.stringify(res, null, 2));

@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<meta name="description" content="A showreel drawn frame by frame in the browser by a small deterministic motion engine.">
+<title>Claude Motion Reel</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2315171F'/%3E%3Cpath d='M12 9.2v13.6L22.6 16z' fill='%23FFB547'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="src/fonts/fonts.css">
+<link rel="stylesheet" href="src/player/player.css">
+</head>
+<body>
+<div class="page" id="app" data-playing="false" data-ready="false">
+  <header class="masthead">
+    <div class="masthead-main">
+      <h1 class="wordmark">Claude Motion Reel</h1>
+      <p class="lede" id="lede">A 46-second showreel drawn frame by frame in your browser by a small motion engine, with no video files and no animation libraries.</p>
+    </div>
+    <p class="specs" id="specs" aria-label="Reel format">8 scenes · 46.1 s · 60 fps · 1920 × 1080</p>
+  </header>
+
+  <main class="main">
+    <section class="monitor" aria-label="Player">
+      <div class="stage" id="stage">
+        <div class="frame" id="frame">
+          <canvas id="canvas" width="1280" height="720" role="img" aria-label="Claude Motion Reel"></canvas>
+
+          <div class="guides" id="guides" aria-hidden="true" hidden>
+            <svg viewBox="0 0 1920 1080" preserveAspectRatio="none" focusable="false">
+              <g class="g-under">
+                <rect x="96" y="54" width="1728" height="972" />
+                <rect x="192" y="108" width="1536" height="864" />
+                <path d="M930 540h60M960 510v60" />
+              </g>
+              <rect class="g-action" x="96" y="54" width="1728" height="972" />
+              <rect class="g-title" x="192" y="108" width="1536" height="864" />
+              <path class="g-cross" d="M930 540h60M960 510v60" />
+            </svg>
+            <span class="gl gl-action">Action safe 90%</span>
+            <span class="gl gl-title">Title safe 80%</span>
+          </div>
+
+          <p class="stage-msg" id="stage-msg" role="status">Loading fonts and scenes</p>
+
+          <button class="stage-play" id="stage-play" type="button" aria-label="Play" title="Play (Space or K)" hidden>
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M8 5.14v13.72a1 1 0 0 0 1.52.85l11.2-6.86a1 1 0 0 0 0-1.7L9.52 4.29A1 1 0 0 0 8 5.14Z"/></svg>
+          </button>
+
+          <div class="rec-badge" id="rec-badge" hidden>
+            <span class="rec-dot" aria-hidden="true"></span><span>REC</span><span class="rec-badge-time" id="rec-badge-time">00:00</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="console">
+        <div class="transport" role="group" aria-label="Transport">
+          <div class="t-group t-nav">
+            <button class="btn btn-primary btn-play" id="btn-play" type="button" aria-label="Play" title="Play (Space or K)" disabled>
+              <svg class="i i-play" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M8 5.14v13.72a1 1 0 0 0 1.52.85l11.2-6.86a1 1 0 0 0 0-1.7L9.52 4.29A1 1 0 0 0 8 5.14Z"/></svg>
+              <svg class="i i-pause" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="6" y="5" width="4.2" height="14" rx="1.2" fill="currentColor"/><rect x="13.8" y="5" width="4.2" height="14" rx="1.2" fill="currentColor"/></svg>
+            </button>
+            <button class="btn" id="btn-prev" type="button" aria-label="Previous scene" title="Previous scene (1 to 8 jump to a scene)" disabled>
+              <svg class="i" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="5" y="5" width="2.4" height="14" rx="1" fill="currentColor"/><path fill="currentColor" d="M19 6.07v11.86a.9.9 0 0 1-1.4.75L9.1 12.75a.9.9 0 0 1 0-1.5l8.5-5.93a.9.9 0 0 1 1.4.75Z"/></svg>
+            </button>
+            <button class="btn" id="btn-back" type="button" aria-label="Back one frame" title="Back one frame (Left arrow)" disabled>
+              <svg class="i" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M14.5 6.5 9 12l5.5 5.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+            <button class="btn" id="btn-fwd" type="button" aria-label="Forward one frame" title="Forward one frame (Right arrow)" disabled>
+              <svg class="i" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M9.5 6.5 15 12l-5.5 5.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+            <button class="btn" id="btn-next" type="button" aria-label="Next scene" title="Next scene (1 to 8 jump to a scene)" disabled>
+              <svg class="i" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="16.6" y="5" width="2.4" height="14" rx="1" fill="currentColor"/><path fill="currentColor" d="M5 6.07v11.86a.9.9 0 0 0 1.4.75l8.5-5.93a.9.9 0 0 0 0-1.5L6.4 5.32A.9.9 0 0 0 5 6.07Z"/></svg>
+            </button>
+          </div>
+
+          <div class="t-time">
+            <span class="tc" id="tc" title="Timecode, hours:minutes:seconds:frames at 60 fps">00:00:00:00</span>
+            <span class="tc-frame"><span class="tc-frame-label">Frame</span> <span id="frame-no">0</span></span>
+          </div>
+
+          <div class="t-right">
+            <div class="seg seg-speed" role="radiogroup" aria-label="Playback speed" title="Playback speed">
+              <label><input type="radio" name="speed" value="0.25"><span>0.25×</span></label>
+              <label><input type="radio" name="speed" value="0.5"><span>0.5×</span></label>
+              <label><input type="radio" name="speed" value="1" checked><span>1×</span></label>
+              <label><input type="radio" name="speed" value="2"><span>2×</span></label>
+            </div>
+            <div class="t-group t-toggles">
+              <button class="btn" id="btn-loop" type="button" aria-pressed="true" aria-label="Loop" title="Loop the reel">
+                <svg class="i" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 2.8 20.2 6 17 9.2"/><path d="M3.8 11.2V10a4 4 0 0 1 4-4h12.4"/><path d="M7 21.2 3.8 18 7 14.8"/><path d="M20.2 12.8V14a4 4 0 0 1-4 4H3.8"/></svg>
+              </button>
+              <button class="btn" id="btn-blur" type="button" aria-pressed="false" aria-label="Motion blur" title="Motion blur (B): renders 6 sub-frames per frame, slower and smoother">
+                <svg class="i" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="15.2" cy="12" r="5.2"/><path d="M3 8.4h5M1.8 12h5M3 15.6h5"/></svg>
+              </button>
+              <button class="btn" id="btn-guides" type="button" aria-pressed="false" aria-label="Safe-area guides" title="Safe-area guides (G)">
+                <svg class="i" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2.8" y="4.8" width="18.4" height="14.4" rx="1.6"/><rect x="6.6" y="8" width="10.8" height="8" rx=".6" stroke-width="1.3"/><path d="M12 10.8v2.4M10.8 12h2.4" stroke-width="1.3"/></svg>
+              </button>
+              <button class="btn" id="btn-fs" type="button" aria-label="Fullscreen" title="Fullscreen (F)">
+                <svg class="i i-fs-enter" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V5.5A1.5 1.5 0 0 1 5.5 4H9"/><path d="M15 4h3.5A1.5 1.5 0 0 1 20 5.5V9"/><path d="M20 15v3.5a1.5 1.5 0 0 1-1.5 1.5H15"/><path d="M9 20H5.5A1.5 1.5 0 0 1 4 18.5V15"/></svg>
+                <svg class="i i-fs-exit" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4v3.5A1.5 1.5 0 0 1 7.5 9H4"/><path d="M20 9h-3.5A1.5 1.5 0 0 1 15 7.5V4"/><path d="M15 20v-3.5a1.5 1.5 0 0 1 1.5-1.5H20"/><path d="M4 15h3.5A1.5 1.5 0 0 1 9 16.5V20"/></svg>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="timeline-wrap">
+          <div class="timeline" id="timeline" role="slider" tabindex="0" aria-label="Timeline" aria-valuemin="0" aria-valuemax="46.1" aria-valuenow="0" aria-valuetext="00:00:00:00" aria-disabled="true">
+            <div class="ruler" id="ruler" aria-hidden="true"></div>
+            <div class="track" id="track" aria-hidden="true"></div>
+            <div class="ghost" id="ghost" aria-hidden="true" hidden><span class="ghost-label" id="ghost-label"></span></div>
+            <div class="playhead" id="playhead" aria-hidden="true"><span class="playhead-grip"></span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <div class="inspector">
+      <section class="panel panel-now" id="now" aria-labelledby="now-heading">
+        <div class="panel-head">
+          <h2 id="now-heading">Now playing</h2>
+          <span class="label" id="now-index">Scene 01 of 08</span>
+        </div>
+        <div class="now-title">
+          <span class="swatch" aria-hidden="true"></span>
+          <h3 id="now-title">Title Sequence</h3>
+        </div>
+        <div class="now-meta">
+          <span class="now-time" id="now-time">00.00 / 06.00 s</span>
+          <span id="now-transition">Opens the reel</span>
+        </div>
+        <div class="meter" aria-hidden="true"><span id="now-meter"></span></div>
+        <h4 class="label notes-label">Technique</h4>
+        <ul class="notes" id="now-notes"></ul>
+        <button class="up-next" id="up-next" type="button">
+          <span class="label">Up next</span>
+          <span class="up-next-name"><span class="swatch" id="up-next-swatch" aria-hidden="true"></span><span id="up-next-title">02 Particle Typography</span></span>
+          <span class="up-next-in" id="up-next-in"></span>
+        </button>
+      </section>
+
+      <section class="panel panel-tweak" aria-labelledby="tweak-heading">
+        <div class="panel-head">
+          <h2 id="tweak-heading">Make it yours</h2>
+        </div>
+        <div class="props">
+          <div class="prop">
+            <label class="label" for="title-input">Title</label>
+            <div class="prop-ctl">
+              <input id="title-input" name="title" type="text" maxlength="24" autocomplete="off" autocapitalize="characters" enterkeyhint="done" spellcheck="false" placeholder="MOTION" value="MOTION" aria-describedby="title-hint">
+              <button class="btn-text" id="title-reset" type="button" title="Back to MOTION">
+                <svg class="i" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 4.5v5h5"/><path d="M4.1 14.5a8.2 8.2 0 1 0 1.9-8.4L3.5 9.5"/></svg>
+                <span>Reset</span>
+              </button>
+              <p class="hint" id="title-hint">Up to 24 characters. The reel redraws as you type.</p>
+            </div>
+          </div>
+
+          <div class="prop">
+            <span class="label" id="seed-label">Seed</span>
+            <div class="prop-ctl">
+              <output class="readout seed-out" id="seed-out" aria-labelledby="seed-label">00001</output>
+              <button class="btn-text" id="seed-shuffle" type="button" title="Pick a new seed for the generative scenes">
+                <svg class="i" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3.8h4.2V8"/><path d="M3.8 20.2 20.2 3.8"/><path d="M20.2 16v4.2H16"/><path d="m14.6 14.6 5.6 5.6"/><path d="m3.8 3.8 5 5"/></svg>
+                <span>Shuffle</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="prop">
+            <span class="label" id="quality-label">Quality</span>
+            <div class="prop-ctl">
+              <div class="seg seg-quality" role="radiogroup" aria-labelledby="quality-label">
+                <label title="Full resolution, lowered automatically if frames run slow"><input type="radio" name="quality" value="auto" checked><span>Auto</span></label>
+                <label title="Full resolution, up to 1920 × 1080"><input type="radio" name="quality" value="full"><span>Full</span></label>
+                <label title="Half resolution, for slow machines"><input type="radio" name="quality" value="draft"><span>Draft</span></label>
+              </div>
+              <span class="readout perf" id="perf" title="Measured render speed and canvas size">Starting</span>
+            </div>
+          </div>
+
+          <div class="prop">
+            <span class="label" id="grain-label">Film grain</span>
+            <div class="prop-ctl">
+              <button class="switch" id="grain-toggle" type="button" role="switch" aria-checked="true" aria-labelledby="grain-label">
+                <span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span>
+                <span class="switch-text" aria-hidden="true">On</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="prop prop-export" id="export-row">
+            <span class="label">Export</span>
+            <div class="prop-ctl">
+              <button class="btn-text btn-rec" id="rec-btn" type="button" disabled>
+                <span class="rec-icon" aria-hidden="true"></span>
+                <span id="rec-btn-text">Record WebM</span>
+              </button>
+              <p class="hint" id="rec-status" role="status">Plays the reel once from the start at 1× and saves <span class="nowrap">claude-motion-reel.webm</span>.</p>
+              <div class="rec-progress" id="rec-progress" hidden><span id="rec-progress-bar"></span></div>
+            </div>
+          </div>
+
+          <div class="prop prop-export" id="export-note" hidden>
+            <span class="label">Export</span>
+            <div class="prop-ctl">
+              <p class="hint">To export MP4, clone the repo and run <code>npm run render</code>.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <details class="keys" id="keys">
+      <summary>
+        <span class="label">Keyboard shortcuts</span>
+        <svg class="i keys-chevron" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+      </summary>
+      <dl class="keys-list">
+        <div><dt><kbd>Space</kbd><span class="kbd-or">or</span><kbd>K</kbd></dt><dd>Play or pause</dd></div>
+        <div><dt><kbd>J</kbd><kbd>L</kbd></dt><dd>Back or forward 1 s</dd></div>
+        <div><dt><kbd><svg class="kbd-i" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M13 8H3.5M7.5 4 3.5 8l4 4"/></svg><span class="sr-only">Left arrow</span></kbd><kbd><svg class="kbd-i" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M3 8h9.5M8.5 4l4 4-4 4"/></svg><span class="sr-only">Right arrow</span></kbd></dt><dd>Back or forward 1 frame</dd></div>
+        <div><dt><kbd>Shift</kbd><span class="kbd-or">+</span><kbd><svg class="kbd-i" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M13 8H3.5M7.5 4 3.5 8l4 4"/></svg><span class="sr-only">Left arrow</span></kbd><kbd><svg class="kbd-i" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M3 8h9.5M8.5 4l4 4-4 4"/></svg><span class="sr-only">Right arrow</span></kbd></dt><dd>Back or forward 1 s</dd></div>
+        <div><dt><kbd>Home</kbd><kbd>End</kbd></dt><dd>Start or end of the reel</dd></div>
+        <div><dt><kbd>1</kbd><span class="kbd-or">to</span><kbd id="key-last-scene">8</kbd></dt><dd>Jump to a scene</dd></div>
+        <div><dt><kbd>G</kbd></dt><dd>Safe-area guides</dd></div>
+        <div><dt><kbd>B</kbd></dt><dd>Motion blur</dd></div>
+        <div><dt><kbd>F</kbd></dt><dd>Fullscreen</dd></div>
+      </dl>
+    </details>
+  </main>
+
+  <footer class="foot">
+    <p>Canvas 2D and WebGL, drawn live. Type: Unbounded, Fraunces, Martian Mono and Instrument Sans, under the SIL Open Font License.</p>
+  </footer>
+</div>
+<script type="module" src="src/main.js"></script>
+</body>
+</html>
