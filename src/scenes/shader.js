@@ -218,14 +218,15 @@ vec3 reflection(vec3 p, vec3 r, vec4 own, float cone, float blur) {
     vec3 oc = p - uBall[i].xyz;
     float rad = uBall[i].w;
     float b = dot(oc, r);
-    float gap = length(oc) - rad;
-    if (b >= 0.0 || gap <= 0.0) continue;       // behind the ray, or the blob we sit on
-    float dd = dot(oc, oc) - b * b;             // squared distance from the centre to the ray
+    float dd = max(dot(oc, oc) - b * b, 0.0);   // squared distance from the centre to the ray
+    float e = sqrt(dd) - rad;                   // ray to surface; negative where it pierces
     float soft = 0.005 - cone * b;
+    if (b >= 0.0 || e >= soft) continue;        // behind the ray, or clear of it
+    float gap = length(oc) - rad;
     float bridge = length(own.xyz - uBall[i].xyz) - own.w - rad;
-    float w = (1.0 - smoothstep(-soft, soft, sqrt(dd) - rad))
+    float w = (1.0 - smoothstep(-soft, soft, e))
             * smoothstep(0.15 * uK, 0.9 * uK, gap) * smoothstep(0.1 * uK, 0.6 * uK, bridge);
-    if (w <= 0.0) continue;
+    if (w <= 0.0) continue;                     // includes the blob we sit on
     float t = -b - sqrt(max(rad * rad - dd, 0.0)); // entry point, or closest approach on a miss
     vec3 n = normalize(oc + r * t);
     if (t < t1) { t2 = t1; w2 = w1; n2 = n1; t1 = t; w1 = w; n1 = n; }

@@ -232,6 +232,9 @@ code {
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
   container: frame / inline-size;
+  /* Marks the picture's edge when it is pillarboxed; the stage clips it
+     away when the picture fills the width. */
+  box-shadow: 0 0 0 1px rgba(236, 232, 224, 0.08);
 }
 
 @supports (height: 100svh) {
