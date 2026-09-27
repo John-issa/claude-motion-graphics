@@ -82,9 +82,7 @@ const FOCAL = 2700; // design px
 const CX = 960;
 const CY = 540;
 
-// Compositing: rows are fitted to the field, then merged while that is cheaper.
-const ROW = 16; // physical px
-const CALL_PX = 6000; // one drawImage call costs about as much as this many pixels
+const BAND = 48; // physical px per composite band
 
 /**
  * Ink → cobalt → mint, pre-shaded for the three facets. The upper half is
@@ -399,23 +397,22 @@ function groundBounds(st, soften, gw, gh) {
 }
 
 /**
- * Rectangles (physical px) that cover everything the field draws: rows of
- * ROW px fitted to the columns, shadows and occlusion skirts, merged down the
- * frame whenever one taller rectangle wastes fewer pixels than a separate
- * drawImage costs. On an accelerated canvas, compositing costs scale with the
- * pixels covered, so a tight fit is worth more than a low call count.
+ * Horizontal bands (physical px) that cover everything the field draws: the
+ * columns, shadows and occlusion skirts, row by row. On an accelerated canvas
+ * compositing costs scale with the pixels covered, plus a little per call;
+ * bands of about 48 px balance the two for this silhouette.
  * Writes [x, y, w, h, ...] into st.rects and returns how many there are.
  */
-function fitRects(st, pw, ph, pad) {
-  const rows = Math.ceil(ph / ROW);
-  if (!st.rowMin || st.rowMin.length < rows) {
-    st.rowMin = new Float32Array(rows);
-    st.rowMax = new Float32Array(rows);
-    st.rects = new Float32Array(rows * 4);
+function fitBands(st, pw, ph, pad) {
+  const nb = Math.ceil(ph / BAND);
+  if (!st.rects || st.rects.length < nb * 4) {
+    st.bandMin = new Float32Array(nb);
+    st.bandMax = new Float32Array(nb);
+    st.rects = new Float32Array(nb * 4);
   }
-  const { rowMin, rowMax, rects } = st;
-  rowMin.fill(Infinity, 0, rows);
-  rowMax.fill(-Infinity, 0, rows);
+  const { bandMin, bandMax, rects } = st;
+  bandMin.fill(Infinity, 0, nb);
+  bandMax.fill(-Infinity, 0, nb);
   const extend = (a, from, to) => {
     let x0 = Infinity;
     let x1 = -Infinity;
@@ -427,11 +424,11 @@ function fitRects(st, pw, ph, pad) {
       if (a[q + 1] < y0) y0 = a[q + 1];
       if (a[q + 1] > y1) y1 = a[q + 1];
     }
-    const r0 = Math.max(0, Math.floor((y0 - pad) / ROW));
-    const r1 = Math.min(rows - 1, Math.floor((y1 + pad) / ROW));
-    for (let q = r0; q <= r1; q++) {
-      if (x0 < rowMin[q]) rowMin[q] = x0;
-      if (x1 > rowMax[q]) rowMax[q] = x1;
+    const b0 = Math.max(0, Math.floor((y0 - pad) / BAND));
+    const b1 = Math.min(nb - 1, Math.floor((y1 + pad) / BAND));
+    for (let q = b0; q <= b1; q++) {
+      if (x0 < bandMin[q]) bandMin[q] = x0;
+      if (x1 > bandMax[q]) bandMax[q] = x1;
     }
   };
   for (let k = 0; k < COUNT; k++) {
@@ -440,48 +437,17 @@ function fitRects(st, pw, ph, pad) {
     extend(st.skirt, k * 8, k * 8 + 8);
   }
   let n = 0;
-  let open = false;
-  let x0 = 0;
-  let x1 = 0;
-  let y0 = 0;
-  let y1 = 0;
-  const emit = () => {
-    rects[n * 4] = x0;
-    rects[n * 4 + 1] = y0;
-    rects[n * 4 + 2] = x1 - x0;
-    rects[n * 4 + 3] = y1 - y0;
+  for (let q = 0; q < nb; q++) {
+    if (!(bandMax[q] > bandMin[q])) continue;
+    const x = Math.max(0, Math.floor(bandMin[q] - pad));
+    const w = Math.min(pw, Math.ceil(bandMax[q] + pad)) - x;
+    if (w <= 0) continue;
+    rects[n * 4] = x;
+    rects[n * 4 + 1] = q * BAND;
+    rects[n * 4 + 2] = w;
+    rects[n * 4 + 3] = Math.min(BAND, ph - q * BAND);
     n++;
-  };
-  for (let q = 0; q < rows; q++) {
-    if (!(rowMax[q] > rowMin[q])) {
-      if (open) emit();
-      open = false;
-      continue;
-    }
-    const a = Math.max(0, Math.floor(rowMin[q] - pad));
-    const b = Math.min(pw, Math.ceil(rowMax[q] + pad));
-    const top = q * ROW;
-    const bottom = Math.min(ph, top + ROW);
-    if (open) {
-      const mx0 = Math.min(x0, a);
-      const mx1 = Math.max(x1, b);
-      const merged = (mx1 - mx0) * (bottom - y0);
-      const separate = (x1 - x0) * (y1 - y0) + (b - a) * (bottom - top) + CALL_PX;
-      if (merged <= separate) {
-        x0 = mx0;
-        x1 = mx1;
-        y1 = bottom;
-        continue;
-      }
-      emit();
-    }
-    open = true;
-    x0 = a;
-    x1 = b;
-    y0 = top;
-    y1 = bottom;
   }
-  if (open) emit();
   return n;
 }
 
@@ -545,8 +511,8 @@ export default defineScene({
       tips: new Float32Array(COUNT * 8),
       skirt: new Float32Array(COUNT * 8),
       floorPts: new Float32Array(8),
-      rowMin: null,
-      rowMax: null,
+      bandMin: null,
+      bandMax: null,
       rects: null,
       field: null, // CPU-backed canvases, created on first render
       ground: null,
@@ -585,7 +551,7 @@ export default defineScene({
     const b = field.getContext('2d');
     // Only these rectangles reach the frame, so only they need clearing: every
     // pixel composited below is cleared and redrawn in this same frame.
-    const n = fitRects(st, pw, ph, Math.ceil(BLUR * px) + 2);
+    const n = fitBands(st, pw, ph, Math.ceil(BLUR * px) + 2);
     const r = st.rects;
     for (let i = 0; i < n * 4; i += 4) b.clearRect(r[i], r[i + 1], r[i + 2], r[i + 3]);
     softGround(b, st, c, px, pw, ph);

@@ -2,11 +2,13 @@
 // out from the centre and becomes a mask edge, and the title rises through it
 // glyph by glyph on closed-form springs, each glyph's variable weight going
 // from light to black as it lands. A signal-red block then slides in behind
-// the word and takes over the frame, ready for the next scene's iris.
+// the word and takes over the frame, and the rules collapse into the point
+// where the next scene's iris opens.
 //
-// Beats: 0.12 rule draws out · 0.55 glyphs rise · 2.0 red block · 2.3 subtitle
-// types on · 2.45 grid · 2.55 weight wave · 3.6 push-in · 4.34 subtitle out ·
-// 4.62 glyphs fall · 4.84 red floods the frame · 5.2 next scene's iris opens.
+// Beats: 0.03 rule draws out · 0.55 glyphs rise · the red block follows the
+// last landing (by 2.0 at the latest), then subtitle, grid and weight wave ·
+// 3.6 push-in · 4.34 subtitle out · 4.62 glyphs fall · 4.84 red floods the
+// frame · 5.24 rules gone into the frame centre as the next scene irises open.
 
 import {
   defineScene,
@@ -35,6 +37,9 @@ const H = 1080;
 // so the loop back into this scene reads as a match cut.
 const AXIS_Y = 600;
 
+// The next scene irises open from the frame centre: the rules collapse into it.
+const IRIS_Y = H / 2;
+
 const SUBTITLE = 'motion graphics, rendered live in your browser';
 
 const LIGHT = 250;
@@ -44,12 +49,12 @@ const BLACK = 900;
 const RISE = spring({ stiffness: 190, damping: 17 }); // ~8 % overshoot, settles in 0.75 s
 const TILT = spring({ stiffness: 120, damping: 11 }); // looser, so rotation lags position
 
-const DROP = 0.38; // seconds each glyph takes to fall out
+const DROP = 0.36; // seconds each glyph takes to fall out
 
 /**
  * Set the title lines at one size: each line sits on its own rule, stacked
  * upward from the axis, centred on its ink. Returns the rows and the red
- * block's horizontal extent (never narrower than the subtitle).
+ * block's extent (never narrower than the subtitle).
  */
 function setLines(c, lines, size, subW) {
   // Slots come from the black weight: every glyph lands there, so a slot never
@@ -64,15 +69,17 @@ function setLines(c, lines, size, subW) {
     const text = lines[li];
     c.font = F;
     const m = c.measureText(text);
+    // Stack by real ink, so accented capitals (É, Å) stay inside the block.
+    const asc = Math.max(capH, m.actualBoundingBoxAscent);
     const base = rule - Math.max(gap, m.actualBoundingBoxDescent + size * 0.05);
     const x = W / 2 - (m.actualBoundingBoxRight - m.actualBoundingBoxLeft) / 2;
     const lay = layoutGlyphs(c, text, F);
     const inkL = x - m.actualBoundingBoxLeft;
     const inkR = x + m.actualBoundingBoxRight;
     // Far enough below the rule to start (and end) fully hidden, tilt included.
-    const hide = rule - base + capH + size * 0.14;
+    const hide = rule - base + asc + size * 0.14;
     rows[li] = { text, base, rule, x, inkL, inkR, hide, lay, glyphs: [] };
-    rule = base - capH - gap;
+    rule = base - asc - gap;
   }
   const padX = Math.round(size * 0.18);
   let x0 = Math.min(...rows.map((r) => r.inkL)) - padX;
@@ -82,7 +89,8 @@ function setLines(c, lines, size, subW) {
     x0 = mid - subW / 2;
     x1 = mid + subW / 2;
   }
-  return { F, rows, x0, x1, y0: rows[0].base - capH - gap };
+  // The block's top sits one gap above the top line's ink.
+  return { F, rows, x0, x1, y0: rule };
 }
 
 /** Time-independent layout for one title string, built once in setup(). */
@@ -123,10 +131,12 @@ function buildLayout(rawTitle, fps) {
   }
   const n = all.length;
   const each = Math.min(0.045, 0.62 / Math.max(1, n - 1));
-  const drop = Math.min(0.03, 0.3 / Math.max(1, n - 1));
+  const drop = Math.min(0.03, 0.2 / Math.max(1, n - 1));
+  // The secondary beat follows the last landing, so short titles never sit idle.
+  const beat = Math.min(2.0, 0.55 + (n - 1) * each + 0.85);
   all.forEach((g, k) => {
     g.t0 = 0.55 + k * each; // rise
-    g.tw = 2.55 + ((g.cx - x0) / (x1 - x0)) * 0.6; // weight wave, swept left to right
+    g.tw = beat + 0.55 + ((g.cx - x0) / (x1 - x0)) * 0.6; // weight wave, swept left to right
     g.t1 = 4.62 + k * drop; // fall
     g.tilt = ((4 + 3 * hash(k, 17)) * Math.PI) / 180;
   });
@@ -136,16 +146,16 @@ function buildLayout(rawTitle, fps) {
   const slateFont = font(18, 'mono', 500);
   const tcTemplate = layoutGlyphs(c, '00:00:00:00', slateFont, 2);
   const labels = [
-    { text: 'CLAUDE MOTION REEL', x: 96, y: 86, align: 'left', at: 0.2 },
-    { text: 'N°01', x: 1824, y: 86, align: 'right', at: 0.3 },
-    { live: true, x: 96, y: 994, align: 'left', at: 0.26 },
-    { text: `1920 × 1080 · ${fps} FPS`, x: 1824, y: 994, align: 'right', at: 0.34 },
+    { text: 'CLAUDE MOTION REEL', x: 96, y: 86, align: 'left', at: 0.11 },
+    { text: 'N°01', x: 1824, y: 86, align: 'right', at: 0.21 },
+    { live: true, x: 96, y: 994, align: 'left', at: 0.17 },
+    { text: `1920 × 1080 · ${fps} FPS`, x: 1824, y: 994, align: 'right', at: 0.25 },
   ].map((l) => ({ ...l, lay: l.live ? tcTemplate : layoutGlyphs(c, l.text, slateFont, 2) }));
 
   const crosses = [];
   [216, 864].forEach((y, r) =>
     [192, 576, 960, 1344, 1728].forEach((x, i) => {
-      crosses.push({ x, y, at: 2.45 + Math.abs(i - 2) * 0.07 + r * 0.05 });
+      crosses.push({ x, y, at: beat + 0.45 + Math.abs(i - 2) * 0.07 + r * 0.05 });
     }),
   );
 
@@ -153,6 +163,7 @@ function buildLayout(rawTitle, fps) {
     size,
     rows,
     block,
+    beat,
     widest: Math.max(...rows.map((r) => r.lay.glyphs.length)),
     cx: W / 2,
     cy: (block.y0 + AXIS_Y + 54) / 2,
@@ -183,24 +194,29 @@ const push = (t) => 1 + 0.06 * eseg(t, 3.6, 4.8, 'inOutSine') + 0.03 * ease.inQu
 /** Extra tracking per glyph slot as the push-in opens the word up. */
 const spread = (t, L) => L.size * 0.03 * eseg(t, 3.6, 4.8, 'inOutSine');
 
-/** The red block in screen space (null before it arrives). */
-function redRect(L, t) {
-  const wipe = ease.outExpo(seg(t, 2.0, 2.65));
-  if (wipe <= 0) return null;
-  const b = L.block;
-  const grow = 18 * eseg(t, 3.6, 4.8, 'inOutSine') + (spread(t, L) * (L.widest - 1)) / 2;
-  let x0 = b.x0 - grow;
-  let x1 = lerp(b.x0, b.x1 + grow, wipe);
-  let y0 = b.y0 - grow;
-  let y1 = b.y1;
+/**
+ * How far the red block has grown past its resting edges (design px, before
+ * the push): enough to keep the outer glyphs inside as the tracking opens.
+ * The rules and the subtitle follow the same edge.
+ */
+const blockGrow = (t, L) => 18 * eseg(t, 3.6, 4.8, 'inOutSine') + (spread(t, L) * (L.widest - 1)) / 2;
+
+/** Takeover progress: a short inhale (negative shrinks the block), then the flood. */
+const takeover = (t) => kf(t, [[4.66, 0], [4.84, -0.04, 'outSine'], [5.26, 1, 'inOutQuart']]);
+
+/**
+ * The red block in screen space at takeover progress q, ignoring the wipe.
+ * The block is centred on the frame, so the push (a scale about the lockup
+ * centre) keeps it centred too.
+ */
+function blockRect(L, t, q) {
   const k = push(t);
-  x0 = L.cx + (x0 - L.cx) * k;
-  x1 = L.cx + (x1 - L.cx) * k;
-  y0 = L.cy + (y0 - L.cy) * k;
-  y1 = L.cy + (y1 - L.cy) * k;
-  // Takeover: a short inhale (negative progress shrinks the block), then the
-  // block floods the frame.
-  const q = kf(t, [[4.66, 0], [4.84, -0.04, 'outSine'], [5.26, 1, 'inOutQuart']]);
+  const g = blockGrow(t, L);
+  const half = ((L.block.x1 - L.block.x0) / 2 + g) * k;
+  let x0 = L.cx - half;
+  let x1 = L.cx + half;
+  let y0 = L.cy + (L.block.y0 - g - L.cy) * k;
+  let y1 = L.cy + (L.block.y1 - L.cy) * k;
   if (q !== 0) {
     x0 = lerp(x0, -4, q);
     y0 = lerp(y0, -4, q);
@@ -210,18 +226,22 @@ function redRect(L, t) {
   return { x0, y0, x1, y1 };
 }
 
-/**
- * Registration crosses. Drawn as filled rects, not strokes: on GPU canvases a
- * stroked path can force a stencil pass that makes the grain's overlay blend
- * several times slower for the whole frame.
- */
+/** The red block as drawn: wiped in from the left edge (null before it arrives). */
+function redRect(L, t) {
+  const wipe = ease.outExpo(seg(t, L.beat, L.beat + 0.65));
+  if (wipe <= 0) return null;
+  const r = blockRect(L, t, takeover(t));
+  r.x1 = lerp(r.x0, r.x1, wipe);
+  return r;
+}
+
+/** Registration crosses: two thin filled rects each, scaling up while turning from × to +. */
 function drawCrosses(ctx, L, t, color, alpha) {
   const k = 1 + 0.06 * ease.inSine(seg(t, 3.6, 6));
   ctx.fillStyle = rgba(color, alpha);
   for (const c of L.crosses) {
     const a = ease.outBack(seg(t, c.at, c.at + 0.5));
     if (a <= 0) continue;
-    // Scale up from nothing while turning from × to +.
     const r = 11 * a;
     ctx.save();
     ctx.translate(W / 2 + (c.x - W / 2) * k, H / 2 + (c.y - H / 2) * k);
@@ -250,16 +270,25 @@ function drawSlate(ctx, L, s, color, alpha) {
   }
 }
 
-/** Baseline rules: draw out from the centre, retract to it on the way out. */
+/** Final collapse of the rules into the frame centre. */
+const collapse = (t) => ease.inQuart(seg(t, 4.98, 5.24));
+
+/** Screen y of a row's rule: on its line through the push, then gliding into the iris origin. */
+const ruleY = (L, row, t) => lerp(L.cy + (row.rule - L.cy) * push(t), IRIS_Y, collapse(t));
+
+/**
+ * Baseline rules, in screen space: they draw out from the centre, hold the
+ * red block's edges through the push and the inhale (but not the flood), and
+ * finally collapse into the frame centre, where the next scene's iris opens.
+ */
 function drawRules(ctx, L, t) {
-  const half = (L.block.x1 - L.block.x0) / 2;
-  const out = ease.inExpo(seg(t, 4.98, 5.36));
+  const b = blockRect(L, t, Math.min(0, takeover(t)));
+  const half = ((b.x1 - b.x0) / 2) * (1 - collapse(t));
   ctx.fillStyle = BONE;
   L.rows.forEach((row, i) => {
     const late = (L.rows.length - 1 - i) * 0.08; // upper rules follow the axis rule
-    const k = ease.outExpo(seg(t, 0.12 + late, 0.85 + late)) * (1 - out);
-    if (k <= 0) return;
-    ctx.fillRect(L.cx - half * k, row.rule - 1, half * k * 2, 2);
+    const w = half * ease.outExpo(seg(t, 0.03 + late, 0.76 + late));
+    if (w > 0) ctx.fillRect(L.cx - w, ruleY(L, row, t) - 1, w * 2, 2);
   });
 }
 
@@ -272,19 +301,23 @@ function pose(g, t, hide) {
   const rot = (1 - TILT(dt)) * -g.tilt + ease.inQuad(out) * g.tilt * 1.5;
   const land = ease.inOutCubic(seg(dt, 0.04, 0.34));
   const weight = LIGHT + (BLACK - LIGHT) * land - 330 * bump(t, g.tw, 0.6);
-  return { y, rot, weight: Math.round(weight / 10) * 10 };
+  return { y, rot, weight: Math.round(weight / 10) * 10 }; // rounded so font instances get reused
 }
 
+/** The glyphs, drawn inside the push transform. */
 function drawGlyphs(ctx, L, t) {
   const sp = spread(t, L);
+  const k = push(t);
   ctx.fillStyle = BONE;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'alphabetic';
   for (const row of L.rows) {
-    // The row's rule is the mask edge: glyphs only exist above it.
+    // The row's rule is the mask edge: glyphs only exist above it. The edge
+    // follows the rule when it lifts into the centre at the end, never down.
+    const edge = Math.min(row.rule, L.cy + (ruleY(L, row, t) - L.cy) / k);
     ctx.save();
     ctx.beginPath();
-    ctx.rect(-W, -H, W * 3, row.rule + H);
+    ctx.rect(-W, -H, W * 3, edge + H);
     ctx.clip();
     for (const g of row.glyphs) {
       const p = pose(g, t, row.hide);
@@ -300,13 +333,15 @@ function drawGlyphs(ctx, L, t) {
   }
 }
 
-/** Mono subtitle typed on under the rule, then backspaced away. */
+/** Mono subtitle typed on under the rule, flush with the block's left edge, then backspaced away. */
 function drawSubtitle(ctx, L, t) {
   const n = SUBTITLE.length;
-  const typed = Math.floor(clamp01((t - 2.3) / 0.95) * n);
+  const at = L.beat + 0.3;
+  const typed = Math.floor(clamp01((t - at) / 0.95) * n);
   const erased = Math.floor(clamp01((t - 4.34) / 0.34) * n);
   const vis = typed - erased;
-  const { font: F, x, y, cell } = L.sub;
+  const { font: F, y, cell } = L.sub;
+  const x = L.sub.x - blockGrow(t, L);
   if (vis > 0) {
     ctx.font = F;
     ctx.fillStyle = rgba(BONE, 0.72);
@@ -316,8 +351,8 @@ function drawSubtitle(ctx, L, t) {
   }
   // Signal cursor: solid while typing, blinking at rest, gone with the text.
   const busy = (typed > 0 && typed < n) || (erased > 0 && erased < n);
-  const resting = typed === n && erased === 0 && (t - 3.25) % 0.5 < 0.28;
-  if (t > 2.24 && t < 4.68 && (busy || resting || typed === 0)) {
+  const resting = typed === n && erased === 0 && (t - at - 0.95) % 0.5 < 0.28;
+  if (t > at - 0.06 && t < 4.68 && (busy || resting || typed === 0)) {
     ctx.fillStyle = SIGNAL;
     ctx.fillRect(x + vis * cell + 2, y - 17, cell - 3, 21);
   }
@@ -329,6 +364,9 @@ export default defineScene({
   duration: 6.0,
   color: '#FF3B1F',
   slug: false,
+  // Flat ink and signal fields with hairlines: the overlay grain moves them by
+  // a level or two and would cost more than the whole scene.
+  post: { grain: 0 },
   notes: [
     'Per-glyph layout that keeps kerning',
     'Closed-form spring physics',
@@ -363,13 +401,14 @@ export default defineScene({
       ctx.restore();
     }
 
+    drawRules(ctx, L, t);
+
     // The lockup, pushed in about its own centre.
     const k = push(t);
     ctx.save();
     ctx.translate(L.cx, L.cy);
     ctx.scale(k, k);
     ctx.translate(-L.cx, -L.cy);
-    drawRules(ctx, L, t);
     drawGlyphs(ctx, L, t);
     drawSubtitle(ctx, L, t);
     ctx.restore();

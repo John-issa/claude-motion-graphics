@@ -2,12 +2,17 @@
 // the way an animation tool shows them (dashed Bézier, tangent handles, a tick
 // every two frames), snap onto a keyframe track with a spring settle, and the
 // lockup reveals out of the track. A playhead crosses it; when it reaches the
-// last keyframe everything collapses into one diamond that shrinks to a point,
-// exactly where the title's hairline starts when the reel loops.
+// last keyframe the lockup folds away in order (credits and tagline, then the
+// title) and the diamonds merge into one that shrinks to a point, exactly
+// where the title's hairline starts when the reel loops.
 //
-// Everything is drawn with fills (rotated rects, sprites, text), never
-// strokes: on GPU canvases a stroked path can force a stencil pass that makes
-// the reel's grain blend several times slower for the whole frame.
+// Beats: 0-0.68 paths draw during the fade in · 0.92 outer pair launches ·
+// 1.1 inner pair · 1.6 track · 1.95 title rises · 2.2-4.4 playhead · 4.38
+// credits and tagline out · 4.6 title sinks · 4.8 diamonds merge · 5.25 gone,
+// solid ink to the end.
+//
+// Everything is drawn with fills: dashes, handles and outlines are thin
+// rotated rects, and dots are cached sprites.
 
 import {
   defineScene,
@@ -46,6 +51,8 @@ const TAGLINE = 'a motion reel, drawn live';
 const FLY = spring({ stiffness: 60, damping: 11 }); // ~4 % overshoot
 const SPIN = spring({ stiffness: 45, damping: 7.5 });
 const WINDUP = 0.18; // seconds a diamond backs up before it launches
+const DRAW = 0.6; // seconds a motion path takes to draw on
+const HEAD = [2.2, 4.4]; // the playhead crosses from the first keyframe to the last
 
 const R = 17; // diamond half-diagonal
 const DASH = 10;
@@ -82,7 +89,7 @@ function progress(P, t) {
 }
 
 /** One motion path: geometry, dashes and frame ticks, all time-independent. */
-function buildPath(i, S, P1, P2, T, launch) {
+function buildPath(i, S, P1, P2, T, launch, drawAt) {
   const pts = bezier(S, P1, P2, T);
   let len = 0;
   for (let k = 1; k < pts.length / 2; k++) {
@@ -124,7 +131,7 @@ function buildPath(i, S, P1, P2, T, launch) {
     back,
     launch,
     arrive: launch + arrive,
-    drawAt: i === 0 || i === 3 ? 0 : 0.1,
+    drawAt,
     outDir: unit(S, P1),
     inDir: unit(P2, T),
     hOut: [S[0] + (P1[0] - S[0]) * 0.5, S[1] + (P1[1] - S[1]) * 0.5],
@@ -144,15 +151,19 @@ function buildLayout(params, reel) {
   const F = font(size, 'display', WEIGHT);
   const track = size * 0.02;
   c.font = F;
+  // Real ink extents, so accented capitals (É, Å) start hidden below the track
+  // and never meet the descenders of the line above.
   const capH = c.measureText('H').actualBoundingBoxAscent;
-  const lead = size * 1.02;
+  const ink = lines.map((ln) => c.measureText(ln));
+  const asc = ink.map((m) => Math.max(capH, m.actualBoundingBoxAscent));
+  const lead = lines.length > 1 ? Math.max(size * 1.02, ink[0].actualBoundingBoxDescent + asc[1] + size * 0.12) : 0;
   const rows = lines.map((text, k) => {
     const lay = layoutGlyphs(c, text, F, track);
     return { text, lay, x: W / 2 - lay.width / 2, base: AXIS_Y - 58 - (lines.length - 1 - k) * lead };
   });
   const left = Math.min(...rows.map((r) => r.x));
   const right = Math.max(...rows.map((r) => r.x + r.lay.width));
-  const titleTop = rows[0].base - capH;
+  const titleTop = rows[0].base - asc[0];
 
   // Keyframe track: as wide as the title, never narrower than 720 px.
   const half = Math.max(360, (right - left) / 2 + 6);
@@ -161,13 +172,14 @@ function buildLayout(params, reel) {
   const tx = [0, 1, 2, 3].map((k) => lerp(x0, x1, k / 3));
 
   // Paths: mirror-symmetric quarter arcs; outer pair rise from the bottom
-  // corners, inner pair drop from the top. Outer pair launches first.
+  // corners, inner pair drop from the top. The finished diagram holds for a
+  // beat after the fade in, then the outer pair launches first.
   const y = AXIS_Y;
   const paths = [
-    buildPath(0, [tx[0] - 250, y + 300], [tx[0] - 80, y + 300], [tx[0], y + 190], [tx[0], y], 0.72),
-    buildPath(1, [tx[1] - 300, y - 420], [tx[1] - 130, y - 420], [tx[1], y - 190], [tx[1], y], 0.98),
-    buildPath(2, [tx[2] + 300, y - 420], [tx[2] + 130, y - 420], [tx[2], y - 190], [tx[2], y], 0.98),
-    buildPath(3, [tx[3] + 250, y + 300], [tx[3] + 80, y + 300], [tx[3], y + 190], [tx[3], y], 0.72),
+    buildPath(0, [tx[0] - 250, y + 300], [tx[0] - 80, y + 300], [tx[0], y + 190], [tx[0], y], 0.92, 0),
+    buildPath(1, [tx[1] - 300, y - 420], [tx[1] - 130, y - 420], [tx[1], y - 190], [tx[1], y], 1.1, 0.08),
+    buildPath(2, [tx[2] + 300, y - 420], [tx[2] + 130, y - 420], [tx[2], y - 190], [tx[2], y], 1.1, 0.08),
+    buildPath(3, [tx[3] + 250, y + 300], [tx[3] + 80, y + 300], [tx[3], y + 190], [tx[3], y], 0.92, 0),
   ];
 
   // Tagline and credits: the credits are the reel's own numbers (reel.fps is
@@ -175,7 +187,7 @@ function buildLayout(params, reel) {
   const tagFont = font(44, 'serif', 360, 'italic');
   c.font = tagFont;
   const tagW = c.measureText(TAGLINE).width;
-  const creditFont = font(18, 'mono', 400);
+  const creditFont = font(20, 'mono', 400);
   const frames = reel.frames;
   const digits = String(frames).length;
   const creditParts = [`${reel.scenes.length} scenes · `, ` frames at ${reel.fps} fps · 0 video files`];
@@ -201,7 +213,7 @@ function buildLayout(params, reel) {
       digits,
     },
     dropBelow: 150,
-    hits: tx.map((x) => lerp(2.2, 4.55, (x - tx[0]) / (tx[3] - tx[0]))),
+    hits: tx.map((x) => lerp(HEAD[0], HEAD[1], (x - tx[0]) / (tx[3] - tx[0]))),
   };
 }
 
@@ -254,7 +266,7 @@ function along(P, u, out) {
 
 /** Motion-path view: dashed path, frame ticks, keyframe markers and handles. */
 function drawPath(ctx, P, t) {
-  const drawn = ease.inOutCubic(seg(t, P.drawAt, P.drawAt + 0.7));
+  const drawn = ease.inOutCubic(seg(t, P.drawAt, P.drawAt + DRAW));
   // Erased behind the diamond; once it has arrived the path is gone for good,
   // even while the spring swings back through the end.
   const gone = t >= P.arrive ? 1 : clamp01(progress(P, t));
@@ -294,10 +306,10 @@ function drawPath(ctx, P, t) {
   }
 }
 
-/** Title rises out of the track, masked so it only exists above it. */
+/** Title rises out of the track, masked so it only exists above it; it sinks back with a small lift first. */
 function drawTitle(ctx, L, t) {
-  const out = ease.inQuart(seg(t, 4.6, 4.9));
-  if (t <= 1.95 || out >= 1) return;
+  const out = ease.inBack(seg(t, 4.6, 4.84));
+  if (t <= 1.95 || t >= 4.84) return;
   ctx.save();
   ctx.beginPath();
   ctx.rect(0, 0, W, AXIS_Y - 3);
@@ -317,35 +329,41 @@ function drawTitle(ctx, L, t) {
   ctx.restore();
 }
 
-/** Tagline and credits drop out of the track, masked so they only exist below it. */
+/**
+ * Tagline and credits drop out of the track, masked so they only exist below
+ * it. They are the first to leave at the close: the credits shut back into
+ * the centre, and the tagline lifts toward the track, fading before it
+ * reaches the diamonds.
+ */
 function drawBelow(ctx, L, t) {
   const inB = ease.outExpo(seg(t, 2.15, 2.9));
-  const outB = ease.inQuart(seg(t, 4.58, 4.88));
-  if (inB <= 0 || outB >= 1) return;
+  if (inB <= 0 || t >= 4.64) return;
   ctx.save();
   ctx.beginPath();
   ctx.rect(0, AXIS_Y + 3, W, H);
   ctx.clip();
-  const dy = -(1 - inB + outB) * L.dropBelow;
+  const dy = -(1 - inB) * L.dropBelow;
   ctx.textAlign = 'left';
   ctx.textBaseline = 'alphabetic';
+  const tagOut = ease.inOutSine(seg(t, 4.46, 4.64));
   ctx.font = L.tag.font;
-  ctx.fillStyle = rgba(BONE, 0.86);
-  ctx.fillText(TAGLINE, L.tag.x, L.tag.y + dy);
+  ctx.fillStyle = rgba(BONE, 0.86 * (1 - tagOut));
+  ctx.fillText(TAGLINE, L.tag.x, L.tag.y + dy - 22 * tagOut);
 
   // Credits open from the centre while the frame count runs up to the real
   // total (zero-padded, so the monospaced line never shifts).
   const cr = L.credit;
-  const open = ease.outExpo(seg(t, 2.45, 3.2)) * (1 - ease.inQuart(seg(t, 4.5, 4.8)));
+  const crOut = seg(t, 4.38, 4.58);
+  const open = ease.outExpo(seg(t, 2.45, 3.2)) * (1 - ease.inQuart(crOut));
   if (open > 0) {
-    const count = Math.round(cr.frames * ease.outExpo(seg(t, 2.45, 3.45)));
+    const count = Math.round(cr.frames * ease.outQuart(seg(t, 2.45, 3.0)));
     const text = cr.parts[0] + count.toLocaleString('en-US', { minimumIntegerDigits: cr.digits }) + cr.parts[1];
     const half = (cr.lay.width / 2 + 8) * open;
     ctx.beginPath();
     ctx.rect(W / 2 - half, AXIS_Y + 3, half * 2, H);
     ctx.clip();
     ctx.font = cr.font;
-    ctx.fillStyle = rgba(BONE, 0.5);
+    ctx.fillStyle = rgba(BONE, 0.62 * (1 - ease.inQuad(crOut)));
     const gl = cr.lay.glyphs;
     for (let i = 0; i < gl.length; i++) ctx.fillText(text[i], cr.x + gl[i].x, cr.y + dy * 0.6);
   }
@@ -359,6 +377,9 @@ export default defineScene({
   color: '#EFEBE3',
   transition: { type: 'fade', duration: 0.8 },
   slug: false,
+  // Hairlines on near-black: the overlay grain is all but invisible here and
+  // would cost more than the whole scene.
+  post: { grain: 0 },
   notes: [
     'Motion paths with Bézier handles',
     'Spring-settled lockup',
@@ -377,23 +398,23 @@ export default defineScene({
     for (const P of L.paths) drawPath(ctx, P, t);
 
     // Collapse: everything slides into the centre of the track.
-    const merge = ease.inOutQuart(seg(t, 4.76, 5.04));
+    const merge = ease.inOutQuart(seg(t, 4.8, 5.05));
     const cx = W / 2;
 
     // Keyframe track, drawn out from the centre once the diamonds have landed.
-    const open = ease.outExpo(seg(t, 1.5, 2.1));
+    const open = ease.outExpo(seg(t, 1.6, 2.0));
     if (open > 0 && merge < 1) {
       const left = lerp(lerp(cx, L.track.x0, open), cx, merge);
       const right = lerp(lerp(cx, L.track.x1, open), cx, merge);
-      const head = lerp(L.tx[0], L.tx[3], clamp01((t - 2.2) / 2.35)); // constant speed: it is time
+      const head = lerp(L.tx[0], L.tx[3], seg(t, HEAD[0], HEAD[1])); // constant speed: it is time
       ctx.fillStyle = rgba(BONE, 0.22);
       ctx.fillRect(left, AXIS_Y - 1, right - left, 2);
-      if (t > 2.2) {
+      if (t > HEAD[0]) {
         ctx.fillStyle = rgba(BONE, 0.85);
         ctx.fillRect(left, AXIS_Y - 1, Math.min(head, right) - left, 2);
       }
       // Playhead.
-      const ph = ease.outExpo(seg(t, 2.05, 2.35)) * (1 - ease.inCubic(seg(t, 4.55, 4.7)));
+      const ph = ease.outExpo(seg(t, 2.05, 2.35)) * (1 - ease.inCubic(seg(t, HEAD[1], HEAD[1] + 0.14)));
       if (ph > 0) {
         ctx.fillStyle = BONE;
         ctx.fillRect(head - 1, AXIS_Y - 30 * ph, 2, 60 * ph);
@@ -419,8 +440,8 @@ export default defineScene({
       let rot = (1 - SPIN(dt)) * (i < 2 ? -1 : 1) * (Math.PI / 2); // mirrored quarter turns
       if (i === 3) {
         // The survivor: a last breath in, then a turn down to a point.
-        r *= kf(t, [[5.02, 1], [5.1, 1.4, 'outCubic'], [5.25, 0, 'inCubic']]);
-        rot += ease.inCubic(seg(t, 5.04, 5.25)) * (Math.PI / 2);
+        r *= kf(t, [[5.03, 1], [5.11, 1.4, 'outCubic'], [5.25, 0, 'inCubic']]);
+        rot += ease.inCubic(seg(t, 5.05, 5.25)) * (Math.PI / 2);
       }
       ctx.fillStyle = P.color;
       diamond(ctx, x, pos[1], r, rot);

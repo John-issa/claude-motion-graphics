@@ -14,6 +14,11 @@ const TRANSITION_NAMES = {
   shutter: 'Shutter',
 };
 
+// A touch has to travel this far (CSS px) before it counts as a drag.
+const TOUCH_SLOP = 6;
+// Horizontal padding inside a clip, either side of its label (matches player.css).
+const CLIP_PAD = 8;
+
 export function transitionName(type) {
   if (TRANSITION_NAMES[type]) return TRANSITION_NAMES[type];
   const s = String(type || 'cut');
@@ -33,6 +38,7 @@ export function createTimeline(el, { meta, fps, onScrubStart, onScrub, onScrubEn
   const playhead = el.querySelector('.playhead');
   const ghost = el.querySelector('.ghost');
   const ghostLabel = el.querySelector('.ghost-label');
+  const scenes = meta.scenes;
   const dur = meta.duration;
   const frames = Math.max(1, meta.frames);
   const pct = (t) => `${((t / dur) * 100).toFixed(4)}%`;
@@ -54,16 +60,24 @@ export function createTimeline(el, { meta, fps, onScrubStart, onScrub, onScrubEn
   }
   ruler.replaceChildren(ticks);
 
-  // Clips and transition overlaps.
-  const clips = meta.scenes.map((s, i) => {
-    const prev = meta.scenes[i - 1];
-    const overlap = prev ? Math.max(0, prev.end - s.start) : 0;
+  // Each clip's visible stretch runs from the end of its incoming overlap to
+  // the start of the next scene, which covers its tail.
+  const spans = scenes.map((s, i) => {
+    const prev = scenes[i - 1];
+    const next = scenes[i + 1];
+    const inT = prev ? Math.max(0, prev.end - s.start) : 0;
+    const outT = next ? Math.max(0, s.end - next.start) : 0;
+    return { inT, outT, visible: Math.max(0, s.end - s.start - inT - outT) };
+  });
+
+  const clips = scenes.map((s, i) => {
     const clip = document.createElement('div');
     clip.className = 'clip';
     clip.style.left = pct(s.start);
     clip.style.width = pct(s.end - s.start);
     clip.style.setProperty('--c', s.color);
-    clip.style.setProperty('--in', (overlap / dur).toFixed(5));
+    clip.style.setProperty('--in', (spans[i].inT / dur).toFixed(5));
+    clip.style.setProperty('--out', (spans[i].outT / dur).toFixed(5));
     clip.title = `${pad(i + 1)} ${s.title}, ${short(s.start, 2)} to ${short(s.end, 2)} s`;
     const num = document.createElement('span');
     num.className = 'clip-num';
@@ -75,21 +89,32 @@ export function createTimeline(el, { meta, fps, onScrubStart, onScrub, onScrubEn
     return clip;
   });
   const overlaps = [];
-  meta.scenes.forEach((s, i) => {
-    const prev = meta.scenes[i - 1];
-    if (!prev) return;
-    const overlap = prev.end - s.start;
-    if (overlap <= 1e-6) return;
+  scenes.forEach((s, i) => {
+    const prev = scenes[i - 1];
+    if (!prev || spans[i].inT <= 1e-6) return;
     const x = document.createElement('div');
     x.className = 'xfade';
     x.style.left = pct(s.start);
-    x.style.width = pct(overlap);
+    x.style.width = pct(spans[i].inT);
     x.style.setProperty('--ca', prev.color);
     x.style.setProperty('--cb', s.color);
-    x.title = `${transitionName(s.transition)} transition, ${short(overlap, 2)} s: ${prev.title} into ${s.title}`;
+    x.title = `${transitionName(s.transition)} transition, ${short(spans[i].inT, 2)} s: ${prev.title} into ${s.title}`;
     overlaps.push(x);
   });
   track.replaceChildren(...clips, ...overlaps);
+
+  // A clip shows its whole title or, when that doesn't fit, just its number:
+  // never a truncated stub. Titles are measured once fonts are ready.
+  let nameWidths = null;
+  function measureNames() {
+    const probe = clips[0] && clips[0].querySelector('.clip-name');
+    if (!probe) return;
+    const cs = getComputedStyle(probe);
+    const ctx = document.createElement('canvas').getContext('2d');
+    if (!ctx) return;
+    ctx.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+    nameWidths = scenes.map((s) => ctx.measureText(s.title).width);
+  }
 
   // Playhead and hover line are positioned in px from a cached width, so a
   // playing reel only changes a transform per frame.
@@ -98,17 +123,24 @@ export function createTimeline(el, { meta, fps, onScrubStart, onScrub, onScrubEn
   const place = (node, t) => {
     node.style.transform = `translateX(${((Math.max(0, Math.min(dur, t)) / dur) * width).toFixed(2)}px)`;
   };
-  if (typeof ResizeObserver === 'function') {
-    new ResizeObserver(() => {
-      width = el.clientWidth || 1;
-      place(playhead, current);
-    }).observe(el);
-  } else {
-    window.addEventListener('resize', () => {
-      width = el.clientWidth || 1;
-      place(playhead, current);
+
+  function fitLabels() {
+    if (!nameWidths) measureNames();
+    if (!nameWidths) return;
+    const w = track.clientWidth || width;
+    clips.forEach((clip, i) => {
+      const room = (spans[i].visible / dur) * w - CLIP_PAD * 2;
+      clip.classList.toggle('is-compact', nameWidths[i] > room - 1);
     });
   }
+
+  const relayout = () => {
+    width = el.clientWidth || 1;
+    place(playhead, current);
+    fitLabels();
+  };
+  if (typeof ResizeObserver === 'function') new ResizeObserver(relayout).observe(el);
+  else window.addEventListener('resize', relayout);
 
   const timeAt = (clientX) => {
     const r = el.getBoundingClientRect();
@@ -127,28 +159,56 @@ export function createTimeline(el, { meta, fps, onScrubStart, onScrub, onScrubEn
   };
 
   let enabled = false;
-  let pointer = null;
+  let pointer = null; // the pointer that is scrubbing
+  let pending = null; // a touch or pen contact that hasn't shown its intent yet
 
-  el.addEventListener('pointerdown', (e) => {
-    if (!enabled || pointer !== null) return;
-    if (e.pointerType === 'mouse' && e.button !== 0) return;
-    if (onScrubStart() === false) return;
+  function begin(e) {
+    if (onScrubStart() === false) return false;
     pointer = e.pointerId;
     try {
-      el.setPointerCapture(e.pointerId);
+      // Touch pointers are already captured implicitly; capturing again would
+      // fire lostpointercapture and end the scrub straight away.
+      if (!el.hasPointerCapture(e.pointerId)) el.setPointerCapture(e.pointerId);
     } catch {
       // Capture can fail for synthetic pointers; scrubbing still works inside.
     }
     el.classList.add('is-scrubbing');
     hideGhost();
-    el.focus({ preventScroll: true });
     onScrub(timeAt(e.clientX));
-    e.preventDefault();
+    return true;
+  }
+
+  // Mouse scrubs at once. A finger could be starting a page scroll, so it
+  // only scrubs once it moves sideways, and a tap without movement seeks.
+  // Clicking doesn't move focus here (see player.js), so no focus ring
+  // appears; keyboard users reach the slider with Tab.
+  el.addEventListener('pointerdown', (e) => {
+    if (!enabled || pointer !== null || pending) return;
+    if (e.pointerType === 'mouse') {
+      if (e.button === 0) begin(e);
+      return;
+    }
+    pending = { id: e.pointerId, x: e.clientX, y: e.clientY };
   });
 
   el.addEventListener('pointermove', (e) => {
-    if (pointer === e.pointerId) onScrub(timeAt(e.clientX));
-    else if (pointer === null && enabled && e.pointerType === 'mouse') showGhost(timeAt(e.clientX));
+    if (pointer === e.pointerId) {
+      onScrub(timeAt(e.clientX));
+      return;
+    }
+    if (pending && pending.id === e.pointerId) {
+      const dx = Math.abs(e.clientX - pending.x);
+      const dy = Math.abs(e.clientY - pending.y);
+      if (dx > TOUCH_SLOP && dx > dy) {
+        pending = null;
+        begin(e);
+      } else if (dy > TOUCH_SLOP) {
+        // A vertical pan: the page scrolls and the reel stays where it is.
+        pending = null;
+      }
+      return;
+    }
+    if (pointer === null && enabled && e.pointerType === 'mouse') showGhost(timeAt(e.clientX));
   });
 
   const finish = (e) => {
@@ -157,9 +217,31 @@ export function createTimeline(el, { meta, fps, onScrubStart, onScrub, onScrubEn
     el.classList.remove('is-scrubbing');
     onScrubEnd();
   };
-  el.addEventListener('pointerup', finish);
-  el.addEventListener('pointercancel', finish);
-  el.addEventListener('lostpointercapture', finish);
+  el.addEventListener('pointerup', (e) => {
+    if (pending && pending.id === e.pointerId) {
+      pending = null;
+      if (enabled && onScrubStart() !== false) {
+        onScrub(timeAt(e.clientX));
+        onScrubEnd();
+      }
+      return;
+    }
+    finish(e);
+  });
+  el.addEventListener('pointercancel', (e) => {
+    // The browser took the gesture (a scroll or a pinch): change nothing.
+    if (pending && pending.id === e.pointerId) {
+      pending = null;
+      return;
+    }
+    finish(e);
+  });
+  // Only the timeline's own capture counts: a touch starts out captured by
+  // the clip under the finger, and moving capture here fires (and bubbles)
+  // lostpointercapture from that clip.
+  el.addEventListener('lostpointercapture', (e) => {
+    if (e.target === el) finish(e);
+  });
   el.addEventListener('pointerleave', () => {
     if (pointer === null) hideGhost();
   });
@@ -192,7 +274,15 @@ export function createTimeline(el, { meta, fps, onScrubStart, onScrub, onScrubEn
     setEnabled(on) {
       enabled = !!on;
       el.setAttribute('aria-disabled', String(!enabled));
-      if (!enabled) hideGhost();
+      if (!enabled) {
+        hideGhost();
+        pending = null;
+      }
+    },
+    /** Re-measure clip titles, for example once the web fonts have loaded. */
+    refit() {
+      nameWidths = null;
+      fitLabels();
     },
   };
 }

@@ -3,16 +3,17 @@
 // Fluorescent pink, blue and yellow inks are laid on warm stock with
 // 'multiply', so every overlap is a true overprint colour. Each plate is
 // misregistered by a small jitter that changes on twos (12 steps a second)
-// while the motion itself stays smooth. A morphing form with a halftone copy,
-// a spirograph line and the word OVERPRINT share the plates; at the end the
-// form collapses to a dot and a halftone wave floods the page blue, knocking
-// the word out to bare paper.
+// while the motion itself stays smooth. A dot springs into a form that morphs
+// on the beat, trailed by a halftone copy, inside a spirograph drawn in one
+// line, under the word OVERPRINT. At the end everything collapses back into
+// the dot and a halftone wave floods the page blue, knocking the word out to
+// bare paper.
 //
-// Budget notes: on an accelerated canvas, arbitrary paths and large uploads
-// are the expensive operations, while cached, pixel-aligned patterns and text
-// are cheap. So the form, its copy and the line are composited in software in
-// one small buffer around the form, the flood is built from pattern-filled
-// discs, and every texture is a tile generated at output resolution.
+// Rendering: on the reel's accelerated canvas, arbitrary paths and large
+// uploads are slow, and text or small patterns can rasterise differently on
+// first use. So everything with detail is composited in software, in opaque
+// buffers at output resolution, and placed with pixel-aligned blits; the
+// canvas itself only receives flat fills and cached texture tiles.
 
 import {
   defineScene,
@@ -65,20 +66,21 @@ function onPaper(ink) {
 }
 const BLUE_ON_PAPER = onPaper(INK.blue);
 
-// Form: holds, then snaps to the next outline on each beat.
+// Form: a dot springs into a circle, then each beat snaps it to the next outline.
 const N = 240; // points per outline
 const CX = 960;
 const CY = 505;
+const DOT = 18; // radius of the dot the form starts and ends as
+const INTRO = 0.15; // the dot pops as the blinds open over the centre
 const BEATS = [1.1, 1.9, 2.7, 3.5, 4.25]; // morph starts: square, triangle, blob, star, dot
 const MORPH = 0.45;
 const COLLAPSE = 0.36;
-const INTRO = 0.15; // the form pops in as the blinds open over the centre
 const ROT = [0, 90, 0, 60, 0, 180].map((d) => (d * Math.PI) / 180); // orientation per outline
 
 // The yellow halftone copy trails the pink original; `shade` is the direction its dots swell toward.
 const YCOPY = { lag: 0.06, dx: 34, dy: 14, shade: (-15 * Math.PI) / 180 };
 
-// The software-composited square around the form (design px).
+// The square around the form that is composited in software (design px).
 const REGION = 780;
 
 // Word.
@@ -96,7 +98,8 @@ const FLOOD = 4.8;
 const FLOOD_SPEED = 3000; // design px per second
 const FLOOD_RISE = 0.22; // seconds for one dot to grow to full coverage
 const FLOOD_PITCH = 24; // design px between screen dots
-const LEVELS = 16; // quantised tones for the pattern-based screen
+const LEVELS = 16; // quantised tones of the screen
+const FLOOD_FAR = Math.hypot(Math.max(CX, W - CX), Math.max(CY, H - CY)) + FLOOD_PITCH + 8;
 
 const intro = spring({ stiffness: 150, damping: 13 });
 const letterEase = cubicBezier(0.2, 1.22, 0.36, 1);
@@ -108,7 +111,7 @@ export default defineScene({
   color: '#FF48B0',
   transition: { type: 'blinds', duration: 0.8, color: '#FF48B0' },
   notes: ['Multiply overprint', 'Procedural halftone', 'Outline morphing with resampled polygons', 'Misregistration on twos'],
-  post: { grain: 0 },
+  post: { grain: 0 }, // the print carries its own paper and ink texture; film grain would read as a filter
   slug: { color: '#0B0C10' },
 
   setup({ seed }) {
@@ -125,14 +128,10 @@ export default defineScene({
     ctx.fillStyle = PAPER;
     ctx.fillRect(0, 0, W, H);
     if (s.t < FLOOD) {
-      // The word is printed flat on the paper, then the region around the form
-      // replaces its middle with the software composite and its overprints.
-      drawWord(ctx, s, kit);
+      drawWordEnds(ctx, s, kit);
       drawFormRegion(ctx, s, kit);
     } else {
       drawFlood(ctx, s, kit);
-      drawWord(ctx, s, kit);
-      drawDot(ctx, s, kit);
     }
     drawTexture(ctx, s, kit);
   },
@@ -148,7 +147,7 @@ function buildOutlines(seed) {
     polygon(3, N, 0, 54, 312),
     blob(seed),
     star(5, N, 0, 16, 318, 140),
-    circle(N, 0, 0, 13),
+    circle(N, 0, 0, DOT),
   ];
   // Rotate each outline's start index to match its predecessor so morphs don't twist.
   for (let i = 1; i < list.length; i++) list[i] = alignStart(list[i - 1], list[i]);
@@ -192,17 +191,18 @@ function formAt(st, t, out) {
     pts = lerpPoints(st.outlines[i], st.outlines[i + 1], e, out);
     rot = lerp(ROT[i], ROT[i + 1], last ? ease.inCubic(u) : e);
   }
-  let scale = intro(t - INTRO);
+  let scale = lerp(DOT / 252, 1, intro(t - INTRO));
   for (let k = 0; k < BEATS.length - 1; k++) scale *= 1 + beatBump(t - BEATS[k]);
   return { pts, rot, scale };
 }
 
-/** Copies peel away from the original after the intro and rejoin it for the collapse. */
+/** Copies peel away from the original after the pop and rejoin it for the collapse. */
 const copySpread = (t) =>
   ease.outCubic(seg(t, INTRO + 0.2, INTRO + 0.95)) * (1 - ease.inOutCubic(seg(t, BEATS[4], BEATS[4] + COLLAPSE)));
 
-/** The halftone copy fills in to solid at the end of its collapse, so the plates meet in one dot. */
-const copySolid = (t) => smoothstep(0.7, 0.98, seg(t, BEATS[4], BEATS[4] + COLLAPSE));
+/** The halftone copy is solid while it is dot-sized, so the plates meet in one dot at both ends. */
+const copySolid = (t, scale) =>
+  Math.max(1 - smoothstep(DOT / 252, 0.3, scale), smoothstep(0.7, 0.98, seg(t, BEATS[4], BEATS[4] + COLLAPSE)));
 
 /** Transform local outline points into page space. */
 function place(src, cx, cy, rot, sc, out) {
@@ -246,7 +246,8 @@ function plateOffset(ink, t, seed) {
 }
 
 // ---------------------------------------------------------------------------
-// Form region: composited in software, then placed pixel-aligned in one blit
+// Before the flood: the square around the form holds every overprint; the
+// ends of the word, outside it, are plain blue on paper.
 
 function drawFormRegion(ctx, s, kit) {
   const { px, form } = kit;
@@ -266,21 +267,13 @@ function drawFormRegion(ctx, s, kit) {
   blit(ctx, kit, form);
 }
 
-/** Place a buffer on the reel's canvas at its pixel position, without resampling. */
-function blit(ctx, kit, buf) {
-  ctx.save();
-  ctx.scale(1 / kit.px, 1 / kit.px);
-  ctx.drawImage(buf.c, buf.x, buf.y);
-  ctx.restore();
-}
-
 /** Yellow: a trailing halftone copy whose dots swell toward its right-hand edge. */
 function drawYellowCopy(g, s) {
   const { t, seed, state: st } = s;
   const f = formAt(st, t - YCOPY.lag, st.scratch[1]);
   if (f.scale <= 0.001) return;
   const spread = copySpread(t);
-  const solid = copySolid(t - YCOPY.lag);
+  const solid = copySolid(t - YCOPY.lag, f.scale);
   const [dx, dy] = plateOffset(INK.yellow, t, seed);
   const cx = CX + YCOPY.dx * spread + dx;
   const cy = CY + YCOPY.dy * spread + dy;
@@ -317,7 +310,7 @@ function drawPinkForm(g, s) {
 
 /**
  * Blue, inside the region: the spirograph and the word drawn into one layer,
- * so where they cross the single ink never double-prints.
+ * so where they cross, the single ink never double-prints.
  */
 function drawBlueLayer(s, kit) {
   const { px, blue } = kit;
@@ -330,8 +323,19 @@ function drawBlueLayer(s, kit) {
   b.setTransform(px, 0, 0, px, bx * px - blue.x, by * px - blue.y);
   drawSpiro(b, s.state, s.t);
   b.setTransform(1, 0, 0, 1, 0, 0);
-  drawWordGlyphs(b, s, kit, -blue.x, -blue.y, () => INK.blue.color);
+  drawWordGlyphs(b, s, kit, blue, () => INK.blue.color);
   return blue.c;
+}
+
+/** The two ends of the word outside the region, blue ink on bare paper. */
+function drawWordEnds(ctx, s, kit) {
+  if (s.t < WORD_IN) return;
+  for (const buf of [kit.wordL, kit.wordR]) {
+    buf.g.fillStyle = PAPER;
+    buf.g.fillRect(0, 0, buf.w, buf.h);
+    drawWordGlyphs(buf.g, s, kit, buf, () => BLUE_ON_PAPER);
+    blit(ctx, kit, buf);
+  }
 }
 
 /** Hypotrochoid: a circle of radius r rolling inside one of radius R, pen at distance d. */
@@ -352,11 +356,12 @@ function spirograph() {
   return out;
 }
 
+/** The line draws itself on, then spins and shrinks into the dot with the form. */
 function drawSpiro(b, st, t) {
   const to = ease.inOutSine(seg(t, LINE_ON[0], LINE_ON[1]));
   if (to <= 0) return;
   const e = ease.inBack(seg(t, BEATS[4], BEATS[4] + COLLAPSE));
-  const k = lerp(1, 0, e);
+  const k = 1 - e;
   if (k <= 0.01) return;
   b.save();
   b.translate(CX, CY);
@@ -412,8 +417,7 @@ function halftone(g, box, step, angle, tone) {
 }
 
 // ---------------------------------------------------------------------------
-// Word: printed straight onto the reel's canvas in pixel space, so its
-// knockout patterns stay pixel-aligned with the flood.
+// Word
 
 /** Word layout at the output pixel size (cached by the engine). */
 function wordLayout(g, px) {
@@ -425,21 +429,23 @@ function wordLayout(g, px) {
 }
 
 /**
- * Draw the letters in pixel space offset by (ox, oy): each rises into a mask
- * at the baseline, staggered left to right. `style(i)` picks each letter's fill.
+ * Draw the letters into buffer `buf` in its pixel space: each rises into a
+ * mask at the baseline, staggered left to right, and moves with the blue
+ * plate. `style(x, y)` picks the fill for the letter centred at page pixel (x, y).
  */
-function drawWordGlyphs(g, s, kit, ox, oy, style) {
+function drawWordGlyphs(g, s, kit, buf, style) {
   const t = s.t;
   if (t < WORD_IN) return;
   const { px } = kit;
   const { f, L, left, base } = wordLayout(g, px);
   const [bx, by] = plateOffset(INK.blue, t, s.seed);
-  const x0 = left + bx * px + ox;
-  const y0 = base + by * px + oy;
+  const x0 = left + bx * px;
+  const y0 = base + by * px;
   const rise = L.ascent + 24 * px;
   g.save();
+  g.translate(-buf.x, -buf.y);
   g.beginPath();
-  g.rect(0, y0 - L.ascent - 80 * px, g.canvas.width, L.ascent + 94 * px);
+  g.rect(0, y0 - L.ascent - 80 * px, W * px, L.ascent + 94 * px);
   g.clip();
   g.font = f;
   g.textAlign = 'left';
@@ -447,42 +453,14 @@ function drawWordGlyphs(g, s, kit, ox, oy, style) {
   for (const gl of L.glyphs) {
     const u = seg(t, WORD_IN + gl.i * 0.05, WORD_IN + gl.i * 0.05 + 0.7);
     if (u <= 0) continue;
-    const fill = style(gl.i, x0 + gl.x + gl.w / 2, y0 - L.ascent / 2);
-    if (!fill) continue;
-    g.fillStyle = fill;
+    g.fillStyle = style(x0 + gl.x + gl.w / 2, y0 - L.ascent / 2);
     g.fillText(gl.ch, x0 + gl.x, y0 + (1 - letterEase(u)) * rise);
   }
   g.restore();
 }
 
-/**
- * The word in the colour of blue ink on paper, set in software like the rest
- * of the type. Before the flood only its ends are needed (the form region
- * reprints the middle with its overprints). Once the flood reaches a letter it
- * inverts: paper dots grow inside the blue, on the same screen as the flood
- * around it, until the letter is bare paper.
- */
-function drawWord(ctx, s, kit) {
-  if (s.t < WORD_IN) return;
-  const flooding = s.t >= FLOOD;
-  for (const buf of flooding ? [kit.word] : [kit.wordL, kit.wordR]) {
-    // Opaque buffers only: paper, or the flood that runs beneath the letters.
-    const g = buf.g;
-    g.fillStyle = PAPER;
-    g.fillRect(0, 0, buf.w, buf.h);
-    if (flooding) paintFlood(g, s, kit, buf.x, buf.y, buf.w, buf.h);
-    drawWordGlyphs(g, s, kit, -buf.x, -buf.y, (i, x, y) => {
-      const tone = flooding ? floodTone(s, kit, x + buf.x, y + buf.y) : 0;
-      if (tone <= 0) return BLUE_ON_PAPER;
-      const level = Math.min(LEVELS, Math.floor(tone * LEVELS));
-      return level >= LEVELS ? PAPER : knockPattern(g, kit, level, s, buf.x, buf.y);
-    });
-    blit(ctx, kit, buf);
-  }
-}
-
 // ---------------------------------------------------------------------------
-// Flood: nested discs, each filled with a cached screen tile of one tone.
+// Flood: the wave, the word inverting as it passes, and the dot sinking into it.
 
 /** The flood's centre in output pixels: the collapsed dot, moving with the blue plate. */
 function floodCentre(s, kit) {
@@ -497,30 +475,52 @@ function floodTone(s, kit, x, y) {
   return ease.outQuad(clamp01((s.t - FLOOD - d / FLOOD_SPEED) / FLOOD_RISE));
 }
 
-/** Radius (design px) inside which the flood tone is at least `tone`. */
+/** Radius (design px) inside which the flood tone is at least `tone` (inverse of outQuad). */
 const floodReach = (dt, tone) => FLOOD_SPEED * (dt - FLOOD_RISE * (1 - Math.sqrt(1 - tone)));
 
+/**
+ * While the wave front is on the page the whole page is printed in software;
+ * once the page is solid blue only the band of the word is.
+ */
 function drawFlood(ctx, s, kit) {
-  ctx.save();
-  ctx.scale(1 / kit.px, 1 / kit.px);
-  paintFlood(ctx, s, kit, 0, 0, W * kit.px, H * kit.px);
-  ctx.restore();
+  const solid = floodReach(s.t - FLOOD, 1) >= FLOOD_FAR;
+  if (solid) {
+    ctx.fillStyle = BLUE_ON_PAPER;
+    ctx.fillRect(0, 0, W, H);
+  }
+  const buf = solid ? kit.word : (kit.page ??= buffer(kit.px, 0, 0, W, H));
+  const g = buf.g;
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.globalCompositeOperation = 'source-over';
+  g.globalAlpha = 1;
+  g.fillStyle = PAPER;
+  g.fillRect(0, 0, buf.w, buf.h);
+  paintFlood(g, s, kit, buf);
+  // A letter the wave has reached inverts: paper dots grow inside the blue, on
+  // the same screen as the flood around it, until the letter is bare paper.
+  drawWordGlyphs(g, s, kit, buf, (x, y) => {
+    const tone = floodTone(s, kit, x, y);
+    if (tone <= 0) return BLUE_ON_PAPER;
+    const level = Math.min(LEVELS, Math.floor(tone * LEVELS));
+    return level >= LEVELS ? PAPER : knockPattern(g, kit, level, s);
+  });
+  if (!solid) drawDot(g, s, kit, buf);
+  blit(ctx, kit, buf);
 }
 
 /**
- * Paint the flood into a pixel-space target whose top-left sits at (ox, oy)
- * on the page and which is w by h pixels: discs from the lowest tone to the
+ * Paint the flood into buffer `buf`: discs from the lowest tone to the
  * highest, each filled with that tone's screen, so every ring of the wave
  * front carries the right dot size.
  */
-function paintFlood(g, s, kit, ox, oy, w, h) {
+function paintFlood(g, s, kit, buf) {
   const { px, tile } = kit;
   const dt = s.t - FLOOD;
   const [fx, fy] = floodCentre(s, kit);
-  const cx = fx - ox;
-  const cy = fy - oy;
-  const far = Math.hypot(Math.max(cx, w - cx), Math.max(cy, h - cy)) / px + FLOOD_PITCH;
-  // Start from the highest tone whose disc already covers the whole target.
+  const cx = fx - buf.x;
+  const cy = fy - buf.y;
+  const far = Math.hypot(Math.max(cx, buf.w - cx), Math.max(cy, buf.h - cy)) / px + FLOOD_PITCH;
+  // Start from the highest tone whose disc already covers the whole buffer.
   let first = 1;
   for (let k = LEVELS; k >= 1; k--) {
     if (floodReach(dt, k / LEVELS) >= far) {
@@ -528,8 +528,7 @@ function paintFlood(g, s, kit, ox, oy, w, h) {
       break;
     }
   }
-  // Shift the context rather than the patterns so a lattice dot sits on the
-  // centre; whole-pixel shifts keep the tiles unresampled.
+  // Shift the context by whole pixels so a lattice dot sits on the centre.
   const tx = mod(cx, tile);
   const ty = mod(cy, tile);
   g.save();
@@ -539,43 +538,34 @@ function paintFlood(g, s, kit, ox, oy, w, h) {
     if (r <= 0) break;
     g.fillStyle = k === LEVELS ? BLUE_ON_PAPER : patternOf(g, kit.flood[k]);
     g.beginPath();
-    if (r >= far) g.rect(-tx, -ty, w, h);
+    if (r >= far) g.rect(-tx, -ty, buf.w, buf.h);
     else g.arc(cx - tx, cy - ty, r * px, 0, TAU);
     g.fill();
   }
   g.restore();
 }
 
-/**
- * The collapsed form: pink and yellow meet in one dot, which sinks into the
- * flood. It overprints the flood, so it is composited in a small buffer.
- */
-function drawDot(ctx, s, kit) {
+/** The collapsed form: pink and yellow meet in one dot, which sinks into the flood. */
+function drawDot(g, s, kit, buf) {
   const k = 1 - ease.inOutCubic(seg(s.t, FLOOD, FLOOD + 0.3));
   if (k <= 0) return;
-  const { px, dot } = kit;
-  const g = dot.g;
-  g.setTransform(1, 0, 0, 1, 0, 0);
-  g.globalCompositeOperation = 'source-over';
-  g.globalAlpha = 1;
-  g.fillStyle = PAPER;
-  g.fillRect(0, 0, dot.w, dot.h);
-  paintFlood(g, s, kit, dot.x, dot.y, dot.w, dot.h);
-  g.setTransform(px, 0, 0, px, -dot.x, -dot.y);
+  const { px } = kit;
+  g.save();
+  g.setTransform(px, 0, 0, px, -buf.x, -buf.y);
   g.globalCompositeOperation = 'multiply';
   for (const ink of [INK.yellow, INK.pink]) {
     const [dx, dy] = plateOffset(ink, s.t, s.seed);
     g.globalAlpha = ink.alpha;
     g.fillStyle = ink.color;
     g.beginPath();
-    g.arc(CX + dx, CY + dy, 13 * k, 0, TAU);
+    g.arc(CX + dx, CY + dy, DOT * k, 0, TAU);
     g.fill();
   }
-  blit(ctx, kit, dot);
+  g.restore();
 }
 
 // ---------------------------------------------------------------------------
-// Texture, over the whole print: the stock's fibres stay put, while the ink's
+// Texture over the whole print: the stock's fibres stay put, while the ink's
 // dropout is re-rolled on twos, as if every frame were a fresh pull.
 
 function drawTexture(ctx, s, kit) {
@@ -598,10 +588,42 @@ function drawTexture(ctx, s, kit) {
 
 const kits = new Map();
 
+function kitFor(ctx) {
+  const w = ctx.canvas.width;
+  let kit = kits.get(w);
+  if (kit) return kit;
+  const px = w / W;
+  const tile = Math.max(8, Math.round(FLOOD_PITCH * px * Math.sqrt(17)));
+  const rx = CX - REGION / 2;
+  const ry = CY - REGION / 2;
+  const [x0, y0, x1, y1] = WORD_BAND;
+  kit = {
+    px,
+    tile,
+    form: buffer(px, rx, ry, REGION, REGION),
+    blue: buffer(px, rx, ry, REGION, REGION),
+    wordL: buffer(px, x0, y0, rx + 8 - x0, y1 - y0),
+    wordR: buffer(px, rx + REGION - 8, y0, x1 - rx - REGION + 8, y1 - y0),
+    word: buffer(px, x0, y0, x1 - x0, y1 - y0),
+    page: null, // whole-page buffer for the flood, made on first use
+    paper: paperTile(px),
+    dropout: dropoutTile(px),
+    flood: [],
+    knock: [],
+  };
+  for (let k = 0; k <= LEVELS; k++) {
+    kit.flood.push(screenTile(tile, k / LEVELS, PAPER, BLUE_ON_PAPER));
+    kit.knock.push(screenTile(tile, k / LEVELS, BLUE_ON_PAPER, PAPER));
+  }
+  if (kits.size >= 3) kits.clear(); // the player changes size with its quality setting
+  kits.set(w, kit);
+  return kit;
+}
+
 /**
  * A software canvas covering a design-space rect, snapped to whole output
- * pixels. willReadFrequently keeps it off the GPU: text and thousands of small
- * paths rasterise quickly there, and each buffer reaches the GPU in one upload.
+ * pixels. willReadFrequently keeps it off the GPU, where text and thousands of
+ * small paths rasterise quickly and identically every time.
  */
 function buffer(px, x, y, w, h) {
   const bx = Math.floor(x * px);
@@ -612,37 +634,12 @@ function buffer(px, x, y, w, h) {
   return { c, g: c.getContext('2d', { willReadFrequently: true }), x: bx, y: by, w: bw, h: bh };
 }
 
-function kitFor(ctx) {
-  const w = ctx.canvas.width;
-  let kit = kits.get(w);
-  if (kit) return kit;
-  const px = w / W;
-  const pitch = FLOOD_PITCH * px;
-  const tile = Math.max(8, Math.round(pitch * Math.sqrt(17)));
-  const rx = CX - REGION / 2;
-  const ry = CY - REGION / 2;
-  const [x0, y0, x1, y1] = WORD_BAND;
-  kit = {
-    px,
-    form: buffer(px, rx, ry, REGION, REGION),
-    blue: buffer(px, rx, ry, REGION, REGION),
-    word: buffer(px, x0, y0, x1 - x0, y1 - y0),
-    wordL: buffer(px, x0, y0, rx + 8 - x0, y1 - y0),
-    wordR: buffer(px, rx + REGION - 8, y0, x1 - rx - REGION + 8, y1 - y0),
-    dot: buffer(px, CX - 30, CY - 30, 60, 60),
-    paper: paperTile(px),
-    dropout: dropoutTile(px),
-    tile,
-    flood: [],
-    knock: [],
-  };
-  for (let k = 0; k <= LEVELS; k++) {
-    kit.flood.push(screenTile(tile, k / LEVELS, PAPER, BLUE_ON_PAPER));
-    kit.knock.push(screenTile(tile, k / LEVELS, BLUE_ON_PAPER, PAPER));
-  }
-  if (kits.size > 6) kits.clear();
-  kits.set(w, kit);
-  return kit;
+/** Place a buffer on the reel's canvas at its pixel position, without resampling. */
+function blit(ctx, kit, buf) {
+  ctx.save();
+  ctx.scale(1 / kit.px, 1 / kit.px);
+  ctx.drawImage(buf.c, buf.x, buf.y);
+  ctx.restore();
 }
 
 const patterns = new WeakMap();
@@ -657,13 +654,13 @@ function patternOf(ctx, source) {
 }
 
 /**
- * Knockout screen at one tone for a software buffer at (ox, oy): locked to the
- * flood's lattice, so a letter's paper dots line up with the blue dots around it.
+ * Knockout screen at one tone, for filling in page-pixel space, locked to the
+ * flood's lattice so a letter's paper dots line up with the blue dots around it.
  */
-function knockPattern(g, kit, level, s, ox, oy) {
+function knockPattern(g, kit, level, s) {
   const p = patternOf(g, kit.knock[level]);
   const [fx, fy] = floodCentre(s, kit);
-  p.setTransform(new DOMMatrix([1, 0, 0, 1, mod(fx - ox, kit.tile), mod(fy - oy, kit.tile)]));
+  p.setTransform(new DOMMatrix([1, 0, 0, 1, mod(fx, kit.tile), mod(fy, kit.tile)]));
   return p;
 }
 
@@ -718,21 +715,31 @@ function textureTile(px, design, seed) {
  * show where there is ink), short bent fibres and tiny inclusions in the pulp.
  */
 function paperTile(px) {
-  const { c, g, T, wrap, rnd } = textureTile(px, 1024, 0x9a9e7);
+  const { c, g, T, wrap, rnd } = textureTile(px, 768, 0x9a9e7);
+  // The patches are soft, so they are painted at 1/8 scale and enlarged.
+  const n = Math.max(8, Math.round(T / 8));
+  const low = makeCanvas(n, n);
+  const lg = low.getContext('2d', { willReadFrequently: true });
   const [r0, g0, b0] = parse(PAPER);
-  for (let i = 0; i < 160; i++) {
-    const r = (50 + rnd() * 110) * px;
+  for (let i = 0; i < 90; i++) {
+    const x = rnd() * n;
+    const y = rnd() * n;
+    const r = ((50 + rnd() * 110) * px * n) / T;
     const a = 0.01 + rnd() * 0.016;
-    wrap(rnd() * T, rnd() * T, r, (X, Y) => {
-      const grad = g.createRadialGradient(X, Y, 0, X, Y, r);
-      grad.addColorStop(0, `rgba(${r0},${g0},${b0},${a})`);
-      grad.addColorStop(1, `rgba(${r0},${g0},${b0},0)`);
-      g.fillStyle = grad;
-      g.fillRect(X - r, Y - r, 2 * r, 2 * r);
-    });
+    for (let oy = -n; oy <= n; oy += n) {
+      for (let ox = -n; ox <= n; ox += n) {
+        const grad = lg.createRadialGradient(x + ox, y + oy, 0, x + ox, y + oy, r);
+        grad.addColorStop(0, `rgba(${r0},${g0},${b0},${a})`);
+        grad.addColorStop(1, `rgba(${r0},${g0},${b0},0)`);
+        lg.fillStyle = grad;
+        lg.fillRect(x + ox - r, y + oy - r, 2 * r, 2 * r);
+      }
+    }
   }
+  g.imageSmoothingQuality = 'high';
+  g.drawImage(low, 0, 0, T, T);
   g.lineCap = 'round';
-  for (let i = 0; i < 900; i++) {
+  for (let i = 0; i < 520; i++) {
     const x = rnd() * T;
     const y = rnd() * T;
     const a = rnd() * TAU;
@@ -751,7 +758,7 @@ function paperTile(px) {
     });
   }
   g.fillStyle = 'rgb(70,58,44)';
-  for (let i = 0; i < 500; i++) {
+  for (let i = 0; i < 290; i++) {
     const r = Math.max(0.4, (0.4 + rnd() * rnd() * 1.2) * px);
     g.globalAlpha = 0.1 + rnd() * 0.3;
     wrap(rnd() * T, rnd() * T, r, (X, Y) => {
@@ -765,9 +772,9 @@ function paperTile(px) {
 
 /** Ink dropout, in the paper colour so it only shows on ink: specks where ink failed to transfer. */
 function dropoutTile(px) {
-  const { c, g, T, wrap, rnd } = textureTile(px, 900, 0xd20b);
+  const { c, g, T, wrap, rnd } = textureTile(px, 640, 0xd20b);
   g.fillStyle = PAPER;
-  for (let i = 0; i < 2000; i++) {
+  for (let i = 0; i < 1000; i++) {
     const r = Math.max(0.35, (0.35 + rnd() * rnd() * 1.5) * px);
     g.globalAlpha = 0.3 + rnd() * 0.7;
     wrap(rnd() * T, rnd() * T, r, (X, Y) => {

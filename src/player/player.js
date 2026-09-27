@@ -9,7 +9,10 @@ import { recordingSupport, startRecording, saveBlob } from './recorder.js';
 
 const DEFAULT_TITLE = 'MOTION';
 const TITLE_MAX = 24;
+// A title change re-runs every scene's setup, which stalls a frame or two.
+// While the reel plays, wait for a longer pause in typing before applying it.
 const TITLE_DEBOUNCE_MS = 200;
+const TITLE_DEBOUNCE_PLAYING_MS = 500;
 const BLUR_SAMPLES = 6;
 const MAX_BACKING_W = 1920;
 const AUTO_SCALES = [1, 0.75, 0.5];
@@ -18,6 +21,11 @@ const REC_H = 720;
 const FILE_BASE = 'claude-motion-reel';
 const REDUCED_MOTION_T = 2.6;
 const QUALITIES = ['auto', 'full', 'draft'];
+// Space left below the timeline when the first screen is fitted to the window.
+const CHROME_AIR = 20;
+// Keys that keep acting while held down; the toggles fire once per press.
+const REPEATING_KEYS = new Set(['ArrowLeft', 'ArrowRight', 'j', 'J', 'l', 'L']);
+const SHORTCUT_KEYS = new Set([' ', 'k', 'K', 'j', 'J', 'l', 'L', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'g', 'G', 'b', 'B', 'f', 'F']);
 
 const isTypingTarget = (node) => {
   if (!node || !(node instanceof Element)) return false;
@@ -28,6 +36,8 @@ const isTypingTarget = (node) => {
   const type = (node.getAttribute('type') || 'text').toLowerCase();
   return !['button', 'checkbox', 'radio', 'range', 'submit', 'reset', 'color', 'file', 'image'].includes(type);
 };
+
+const prefersReducedMotion = () => !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
 
 /** Rolling window of recent samples; the median shrugs off one-off spikes. */
 function createWindow(size) {
@@ -64,6 +74,9 @@ export function createPlayer({ reel, target = 'dev', prefs = {} }) {
   const $ = (id) => document.getElementById(id);
   const app = $('app');
   const el = {
+    masthead: document.querySelector('.masthead'),
+    monitor: document.querySelector('.monitor'),
+    console: document.querySelector('.console'),
     stage: $('stage'),
     frame: $('frame'),
     canvas: $('canvas'),
@@ -72,7 +85,6 @@ export function createPlayer({ reel, target = 'dev', prefs = {} }) {
     stagePlay: $('stage-play'),
     recBadge: $('rec-badge'),
     recBadgeTime: $('rec-badge-time'),
-    transport: document.querySelector('.transport'),
     play: $('btn-play'),
     prev: $('btn-prev'),
     back: $('btn-back'),
@@ -148,7 +160,8 @@ export function createPlayer({ reel, target = 'dev', prefs = {} }) {
   let lastNow = 0;
   let autoLevel = 0; // index into AUTO_SCALES
   let autoCap = 0; // Auto never climbs above this level (set when fill rate, not draw time, was the limit)
-  let cssW = el.frame.clientWidth || 960;
+  // The canvas box in device pixels, which is what a 1:1 backing store needs.
+  const box = { w: 0, h: 0 };
   let resumeAfterScrub = false;
   let resumeOnShow = false;
   const perf = { renders: createWindow(30), intervals: createWindow(30), count: 0, since: 0, lastAdapt: 0, lastCheck: 0, text: '' };
@@ -180,20 +193,48 @@ export function createPlayer({ reel, target = 'dev', prefs = {} }) {
     el.keyLast.textContent = String(lastKey);
     el.prev.title = `Previous scene (1 to ${lastKey} jump to a scene)`;
     el.next.title = `Next scene (1 to ${lastKey} jump to a scene)`;
-    el.timeline.setAttribute('aria-valuemax', duration.toFixed(2));
+    // The slider's range is the frames it can actually reach.
+    el.timeline.setAttribute('aria-valuemax', lastT.toFixed(2));
     el.titleInput.value = reel.params.title || DEFAULT_TITLE;
     showSeed();
     for (const input of qualityInputs) input.checked = input.value === state.quality;
     reel.setGrain(state.grain);
     reflectGrain();
-    if (window.matchMedia && window.matchMedia('(min-width: 760px) and (hover: hover)').matches) el.keys.open = true;
+    if (window.matchMedia && window.matchMedia('(min-width: 1000px) and (hover: hover)').matches) el.keys.open = true;
+  }
+
+  // ---------- First-screen fit ----------
+
+  /**
+   * --chrome is everything on the first screen except the picture: the space
+   * above the stage plus the console below it. CSS sizes the picture to the
+   * rest of the window height (player.css .frame), so stage, transport and
+   * timeline fit together. Neither part depends on the picture's size, so
+   * measuring can't feed back into itself.
+   */
+  let chromePx = 0;
+  function measureChrome() {
+    if (fsElement()) return;
+    const stageBox = el.stage.getBoundingClientRect();
+    const monitorBox = el.monitor.getBoundingClientRect();
+    const above = stageBox.top + (window.scrollY || 0);
+    const below = monitorBox.bottom - stageBox.bottom;
+    const px = Math.ceil(above + below + CHROME_AIR);
+    if (px > 0 && px !== chromePx) {
+      chromePx = px;
+      document.documentElement.style.setProperty('--chrome', `${px}px`);
+    }
   }
 
   // ---------- Canvas size ----------
 
   const qualityScale = () => (state.quality === 'full' ? 1 : state.quality === 'draft' ? 0.5 : AUTO_SCALES[autoLevel]);
 
-  /** Backing store = CSS size × devicePixelRatio × quality, capped at 1920 wide. */
+  /**
+   * Backing store = the canvas box in device pixels × quality, capped at
+   * 1920 × 1080. At full quality it matches the box exactly, so the picture
+   * is drawn 1:1 with no resampling.
+   */
   function fitCanvas() {
     let w;
     let h;
@@ -201,10 +242,25 @@ export function createPlayer({ reel, target = 'dev', prefs = {} }) {
       w = REC_W;
       h = REC_H;
     } else {
-      const dpr = window.devicePixelRatio || 1;
-      const full = Math.min(cssW * dpr, MAX_BACKING_W);
-      w = Math.max(64, Math.round((full * qualityScale()) / 16) * 16);
-      h = (w / 16) * 9;
+      const scale = qualityScale();
+      if (!box.w || !box.h) {
+        const r = el.canvas.getBoundingClientRect();
+        const dpr = window.devicePixelRatio || 1;
+        box.w = Math.round(r.width * dpr) || 1280;
+        box.h = Math.round(r.height * dpr) || 720;
+      }
+      if (box.w > MAX_BACKING_W) {
+        w = Math.round(MAX_BACKING_W * scale);
+        h = Math.round((w * 9) / 16);
+      } else if (scale === 1) {
+        w = box.w;
+        h = box.h;
+      } else {
+        w = Math.round(box.w * scale);
+        h = Math.round(box.h * scale);
+      }
+      w = Math.max(64, w);
+      h = Math.max(36, h);
     }
     if (el.canvas.width !== w || el.canvas.height !== h) {
       el.canvas.width = w;
@@ -214,21 +270,54 @@ export function createPlayer({ reel, target = 'dev', prefs = {} }) {
     }
   }
 
+  function setBox(w, h) {
+    if (!w || !h) return;
+    if (Math.abs(w - box.w) > 1) autoCap = 0;
+    box.w = w;
+    box.h = h;
+    fitCanvas();
+    // Draw now rather than next frame, so a resize never shows an empty canvas.
+    if (dirty && state.ready) draw();
+  }
+
+  // True once the browser reports device-pixel boxes (Chromium, Firefox).
+  let devicePixelBoxes = false;
   if (typeof ResizeObserver === 'function') {
-    new ResizeObserver((entries) => {
+    const canvasObserver = new ResizeObserver((entries) => {
       const entry = entries[entries.length - 1];
-      const box = entry.contentBoxSize && entry.contentBoxSize[0];
-      const width = box ? box.inlineSize : entry.contentRect.width;
-      if (Math.abs(width - cssW) > 1) autoCap = 0;
-      cssW = width;
-      fitCanvas();
-      // Draw now rather than next frame, so a resize never shows an empty canvas.
-      if (dirty && state.ready) draw();
-    }).observe(el.frame);
+      const cb = entry.contentBoxSize && entry.contentBoxSize[0];
+      const dpr = window.devicePixelRatio || 1;
+      const cw = cb ? cb.inlineSize : entry.contentRect.width;
+      const ch = cb ? cb.blockSize : entry.contentRect.height;
+      const dp = entry.devicePixelContentBoxSize && entry.devicePixelContentBoxSize[0];
+      // The device-pixel box is the browser's own snapped size, ideal for a
+      // 1:1 canvas. Trust it only when it agrees with devicePixelRatio: some
+      // emulated screens report CSS pixels there.
+      if (dp && Math.abs(dp.inlineSize - cw * dpr) <= 1.5 && Math.abs(dp.blockSize - ch * dpr) <= 1.5) {
+        devicePixelBoxes = true;
+        setBox(dp.inlineSize, dp.blockSize);
+      } else {
+        devicePixelBoxes = false;
+        setBox(Math.round(cw * dpr), Math.round(ch * dpr));
+      }
+    });
+    try {
+      canvasObserver.observe(el.canvas, { box: 'device-pixel-content-box' });
+    } catch {
+      canvasObserver.observe(el.canvas);
+    }
+    const chromeObserver = new ResizeObserver(() => measureChrome());
+    chromeObserver.observe(el.masthead);
+    chromeObserver.observe(el.console);
   }
   window.addEventListener('resize', () => {
-    cssW = el.frame.clientWidth || cssW;
-    fitCanvas();
+    measureChrome();
+    // Without device-pixel boxes (Safari), a zoom change only shows up here.
+    if (!devicePixelBoxes) {
+      const r = el.canvas.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      setBox(Math.round(r.width * dpr), Math.round(r.height * dpr));
+    }
     if (dirty) request();
   });
 
@@ -288,6 +377,16 @@ export function createPlayer({ reel, target = 'dev', prefs = {} }) {
   }
 
   /**
+   * After a title or seed change has re-run the scene setups: hold the clock
+   * so the stall doesn't skip playback forward, then redraw.
+   */
+  function afterRebuild() {
+    lastNow = 0;
+    dirty = true;
+    request();
+  }
+
+  /**
    * Auto quality: drop the render scale when frames run slow, raise it again
    * when there is headroom. Decisions use medians over the last 30 frames, so
    * a one-off spike (first frame of a scene, a GC pause) changes nothing.
@@ -332,7 +431,7 @@ export function createPlayer({ reel, target = 'dev', prefs = {} }) {
     const parts = [rate, ms ? `${ms.toFixed(1)} ms/frame` : '– ms/frame', `${el.canvas.width}×${el.canvas.height}`];
     if (state.quality === 'auto' && autoLevel > 0 && !rec) parts.push(`${Math.round(AUTO_SCALES[autoLevel] * 100)}% scale`);
     // Non-breaking inside each part, so a narrow panel wraps only after a dot.
-    const text = parts.map((p) => p.replace(/ /g, '\u00A0')).join('\u00A0· ');
+    const text = parts.map((p) => p.replace(/ /g, ' ')).join(' · ');
     if (text !== perf.text) {
       perf.text = text;
       el.perf.textContent = text;
@@ -409,8 +508,8 @@ export function createPlayer({ reel, target = 'dev', prefs = {} }) {
     const key = `${nx}|${ends}`;
     if (key !== ui.upNextKey) {
       ui.upNextKey = key;
-      el.upNext.disabled = ends;
-      el.upNext.style.setProperty('--n', ends ? 'var(--line-2)' : scenes[nx].color);
+      el.upNext.disabled = ends || !!rec;
+      el.upNext.style.setProperty('--n', ends ? 'var(--line-3)' : scenes[nx].color);
       el.upNextTitle.textContent = ends ? 'End of the reel' : `${pad(nx + 1)} ${scenes[nx].title}`;
       el.upNext.title = ends ? '' : last ? 'Back to the start' : `Skip to ${scenes[nx].title}`;
     }
@@ -423,11 +522,21 @@ export function createPlayer({ reel, target = 'dev', prefs = {} }) {
   }
 
   function reflect() {
+    const atEnd = state.t >= lastT - 1e-6;
+    const atStart = state.t <= 1e-6;
     app.dataset.playing = String(state.playing);
-    const label = state.playing ? 'Pause' : 'Play';
+    app.dataset.atEnd = String(atEnd && !state.playing);
+    const label = state.playing ? 'Pause' : atEnd ? 'Replay' : 'Play';
     el.play.setAttribute('aria-label', label);
     el.play.title = `${label} (Space or K)`;
-    el.stagePlay.hidden = !state.ready || state.playing || state.inspecting || state.scrubbing || !!rec;
+    // Paused, the stage always offers play. After a seek or a frame step it
+    // moves to a corner so it doesn't cover the frame being inspected; at
+    // either end of the reel there is nothing to inspect, so it stays central.
+    el.stagePlay.hidden = !state.ready || state.playing || state.scrubbing || !!rec;
+    el.stagePlay.dataset.mode = state.inspecting && !atEnd && !atStart ? 'corner' : 'centre';
+    const stageLabel = atEnd ? 'Replay' : 'Play';
+    el.stagePlay.setAttribute('aria-label', stageLabel);
+    el.stagePlay.title = `${stageLabel} (Space or K)`;
     el.loop.setAttribute('aria-pressed', String(state.loop));
     el.blur.setAttribute('aria-pressed', String(state.blur));
     el.guidesBtn.setAttribute('aria-pressed', String(state.guides));
@@ -543,7 +652,9 @@ export function createPlayer({ reel, target = 'dev', prefs = {} }) {
 
   // ---------- Fullscreen ----------
 
-  const fsElement = () => document.fullscreenElement || document.webkitFullscreenElement || null;
+  function fsElement() {
+    return document.fullscreenElement || document.webkitFullscreenElement || null;
+  }
   // Trust the standard flag when it exists (a sandboxed frame sets it false
   // while Chromium still reports the prefixed one); fall back for old Safari.
   const fsEnabled = 'fullscreenEnabled' in document ? !!document.fullscreenEnabled : !!document.webkitFullscreenEnabled;
@@ -572,6 +683,7 @@ export function createPlayer({ reel, target = 'dev', prefs = {} }) {
     app.dataset.fullscreen = String(on);
     el.fs.setAttribute('aria-label', on ? 'Exit fullscreen' : 'Fullscreen');
     el.fs.title = on ? 'Exit fullscreen (F)' : 'Fullscreen (F)';
+    if (!on) measureChrome();
   };
   document.addEventListener('fullscreenchange', onFullscreenChange);
   document.addEventListener('webkitfullscreenchange', onFullscreenChange);
@@ -587,15 +699,14 @@ export function createPlayer({ reel, target = 'dev', prefs = {} }) {
     const title = typed || DEFAULT_TITLE;
     if (title !== reel.params.title) {
       reel.setParams({ title });
-      dirty = true;
-      request();
+      afterRebuild();
     }
     savePrefs({ title: typed });
   }
 
   el.titleInput.addEventListener('input', () => {
     clearTimeout(titleTimer);
-    titleTimer = setTimeout(applyTitle, TITLE_DEBOUNCE_MS);
+    titleTimer = setTimeout(applyTitle, state.playing ? TITLE_DEBOUNCE_PLAYING_MS : TITLE_DEBOUNCE_MS);
   });
   el.titleInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') applyTitle();
@@ -617,8 +728,7 @@ export function createPlayer({ reel, target = 'dev', prefs = {} }) {
     reel.setSeed(seed);
     showSeed();
     savePrefs({ seed });
-    dirty = true;
-    request();
+    afterRebuild();
   });
 
   for (const input of qualityInputs) {
@@ -657,13 +767,14 @@ export function createPlayer({ reel, target = 'dev', prefs = {} }) {
     return span;
   };
   const setRecStatus = (...parts) => el.recStatus.replaceChildren(...parts);
+  const idleRecStatus = () => setRecStatus(`Plays the reel once at 1× and saves a ${REC_W} × ${REC_H} `, nowrap(fileName), '.');
 
   if (target === 'artifact') {
     el.exportRow.hidden = true;
     el.exportNote.hidden = false;
   } else {
     el.recText.textContent = recLabel;
-    if (support) setRecStatus('Plays the reel once from the start at 1× and saves ', nowrap(fileName), '.');
+    if (support) idleRecStatus();
     else
       setRecStatus(
         'This browser cannot record a canvas to video. Try a recent Chrome, Edge or Firefox, or clone the repo and run ',
@@ -692,10 +803,8 @@ export function createPlayer({ reel, target = 'dev', prefs = {} }) {
   function setLocked(locked) {
     for (const control of lockable()) control.disabled = locked;
     timeline.setEnabled(!locked && state.ready);
-    if (!locked) {
-      ui.upNextKey = '';
-      updateUpNext(reel.sceneAt(state.t).index, state.t);
-    }
+    ui.upNextKey = '';
+    updateUpNext(reel.sceneAt(state.t).index, state.t);
   }
 
   function startRecordingRun() {
@@ -704,6 +813,8 @@ export function createPlayer({ reel, target = 'dev', prefs = {} }) {
     pause();
     rec = { saved, session: null, cancelled: false, finishing: false };
     app.dataset.recording = 'true';
+    // The take always runs at 1×; show that, and restore the viewer's speed after.
+    state.speed = 1;
     setLocked(true);
     fitCanvas();
     state.t = 0;
@@ -728,8 +839,10 @@ export function createPlayer({ reel, target = 'dev', prefs = {} }) {
     el.recText.textContent = 'Cancel recording';
     el.recProgress.hidden = false;
     el.recBadge.hidden = false;
-    setRecStatus(`Recording ${REC_W} × ${REC_H} in real time. Keep this tab visible until it finishes.`);
+    setRecStatus(`Recording ${REC_W} × ${REC_H} in real time. Keep this tab visible; Esc cancels.`);
     play();
+    // Keep the picture and its REC badge in view for the whole take.
+    el.stage.scrollIntoView({ block: 'nearest', behavior: prefersReducedMotion() ? 'auto' : 'smooth' });
   }
 
   function finishRecording() {
@@ -842,11 +955,17 @@ export function createPlayer({ reel, target = 'dev', prefs = {} }) {
     });
   }
 
-  // Clicking a button or a segmented option should not leave focus on it,
-  // so Space keeps meaning play/pause. Keyboard focus is unaffected.
-  for (const node of document.querySelectorAll('.page button, .seg label, .keys summary')) {
+  // Clicking a button, a segmented option or the timeline doesn't move focus
+  // onto it, so Space keeps meaning play/pause and no keyboard focus ring
+  // appears. It does end typing in the title field (other than its own Reset),
+  // so the shortcuts work again straight away. Keyboard focus is unaffected.
+  for (const node of document.querySelectorAll('.page button, .seg label, .keys summary, #timeline')) {
     node.addEventListener('mousedown', (e) => {
-      if (e.button === 0) e.preventDefault();
+      if (e.button !== 0) return;
+      e.preventDefault();
+      const active = document.activeElement;
+      const prop = active && active.closest ? active.closest('.prop') : null;
+      if (isTypingTarget(active) && !(prop && prop.contains(node))) active.blur();
     });
   }
 
@@ -857,14 +976,6 @@ export function createPlayer({ reel, target = 'dev', prefs = {} }) {
     e.stopPropagation();
     if (!rec) play();
   });
-  // Moving the mouse over a paused stage brings back the play button that
-  // frame stepping and scrubbing hide.
-  el.frame.addEventListener('pointermove', (e) => {
-    if (e.pointerType === 'mouse' && state.inspecting && !state.playing && !state.scrubbing) {
-      state.inspecting = false;
-      reflect();
-    }
-  });
 
   window.addEventListener('keydown', (e) => {
     if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return;
@@ -873,6 +984,12 @@ export function createPlayer({ reel, target = 'dev', prefs = {} }) {
     const key = e.key;
     if ((key === ' ' || key === 'Enter') && node && node.closest('button, summary, a[href], [role="button"], [role="switch"]')) return;
     if (node && node.matches('input[type="radio"]') && (key.startsWith('Arrow') || key === ' ')) return;
+    const isShortcut = SHORTCUT_KEYS.has(key) || key === 'Escape' || (/^[1-9]$/.test(key) && Number(key) <= scenes.length);
+    // Holding a toggle key must not flicker it; stepping keys may repeat.
+    if (e.repeat && !REPEATING_KEYS.has(key)) {
+      if (isShortcut) e.preventDefault();
+      return;
+    }
     if (rec) {
       if (key === 'Escape') cancelRecording();
       else if (key === 'g' || key === 'G') setGuides(!state.guides);
@@ -955,9 +1072,11 @@ export function createPlayer({ reel, target = 'dev', prefs = {} }) {
     el.stageMsg.hidden = true;
     setLocked(false);
     el.rec.disabled = !support;
+    // Fonts are loaded now, so clip titles measure true.
+    timeline.refit();
+    measureChrome();
     fitCanvas();
-    const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    if (reduce) {
+    if (prefersReducedMotion()) {
       // Start paused on a representative frame, with the play button showing.
       state.t = Math.min(lastT, Math.round(REDUCED_MOTION_T * fps) / fps);
       dirty = true;
@@ -978,6 +1097,7 @@ export function createPlayer({ reel, target = 'dev', prefs = {} }) {
   }
 
   fillStatic();
+  measureChrome();
   fitCanvas();
   syncUI();
   reflect();
@@ -1002,7 +1122,9 @@ export function createPlayer({ reel, target = 'dev', prefs = {} }) {
         frame: frameAt(state.t, fps, frames),
         recording: !!rec,
         canvas: [el.canvas.width, el.canvas.height],
+        box: [box.w, box.h],
         autoScale: AUTO_SCALES[autoLevel],
+        chrome: chromePx,
       };
     },
     play,

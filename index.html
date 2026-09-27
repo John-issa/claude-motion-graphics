@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
 <meta name="description" content="A showreel drawn frame by frame in the browser by a small deterministic motion engine.">
 <title>Claude Motion Reel</title>
@@ -17,7 +17,7 @@
       <h1 class="wordmark">Claude Motion Reel</h1>
       <p class="lede" id="lede">A 46-second showreel drawn frame by frame in your browser by a small motion engine, with no video files and no animation libraries.</p>
     </div>
-    <p class="specs" id="specs" aria-label="Reel format">8 scenes · 46.1 s · 60 fps · 1920 × 1080</p>
+    <p class="specs" id="specs">8 scenes · 46.1 s · 60 fps · 1920 × 1080</p>
   </header>
 
   <main class="main">
@@ -43,8 +43,9 @@
 
           <p class="stage-msg" id="stage-msg" role="status">Loading fonts and scenes</p>
 
-          <button class="stage-play" id="stage-play" type="button" aria-label="Play" title="Play (Space or K)" hidden>
-            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M8 5.14v13.72a1 1 0 0 0 1.52.85l11.2-6.86a1 1 0 0 0 0-1.7L9.52 4.29A1 1 0 0 0 8 5.14Z"/></svg>
+          <button class="stage-play" id="stage-play" type="button" aria-label="Play" title="Play (Space or K)" data-mode="centre" hidden>
+            <svg class="i-play" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M8 5.14v13.72a1 1 0 0 0 1.52.85l11.2-6.86a1 1 0 0 0 0-1.7L9.52 4.29A1 1 0 0 0 8 5.14Z"/></svg>
+            <svg class="i-replay" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4.5v5h5"/><path d="M4.6 14.5a7.8 7.8 0 1 0 1.8-8L4 9.5"/></svg>
           </button>
 
           <div class="rec-badge" id="rec-badge" hidden>
@@ -59,6 +60,7 @@
             <button class="btn btn-primary btn-play" id="btn-play" type="button" aria-label="Play" title="Play (Space or K)" disabled>
               <svg class="i i-play" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M8 5.14v13.72a1 1 0 0 0 1.52.85l11.2-6.86a1 1 0 0 0 0-1.7L9.52 4.29A1 1 0 0 0 8 5.14Z"/></svg>
               <svg class="i i-pause" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="6" y="5" width="4.2" height="14" rx="1.2" fill="currentColor"/><rect x="13.8" y="5" width="4.2" height="14" rx="1.2" fill="currentColor"/></svg>
+              <svg class="i i-replay" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4.5v5h5"/><path d="M4.6 14.5a7.8 7.8 0 1 0 1.8-8L4 9.5"/></svg>
             </button>
             <button class="btn" id="btn-prev" type="button" aria-label="Previous scene" title="Previous scene (1 to 8 jump to a scene)" disabled>
               <svg class="i" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="5" y="5" width="2.4" height="14" rx="1" fill="currentColor"/><path fill="currentColor" d="M19 6.07v11.86a.9.9 0 0 1-1.4.75L9.1 12.75a.9.9 0 0 1 0-1.5l8.5-5.93a.9.9 0 0 1 1.4.75Z"/></svg>
@@ -105,7 +107,7 @@
         </div>
 
         <div class="timeline-wrap">
-          <div class="timeline" id="timeline" role="slider" tabindex="0" aria-label="Timeline" aria-valuemin="0" aria-valuemax="46.1" aria-valuenow="0" aria-valuetext="00:00:00:00" aria-disabled="true">
+          <div class="timeline" id="timeline" role="slider" tabindex="0" aria-label="Timeline" aria-valuemin="0" aria-valuemax="46.08" aria-valuenow="0" aria-valuetext="00:00:00:00" aria-disabled="true">
             <div class="ruler" id="ruler" aria-hidden="true"></div>
             <div class="track" id="track" aria-hidden="true"></div>
             <div class="ghost" id="ghost" aria-hidden="true" hidden><span class="ghost-label" id="ghost-label"></span></div>
@@ -196,12 +198,12 @@
                 <span class="rec-icon" aria-hidden="true"></span>
                 <span id="rec-btn-text">Record WebM</span>
               </button>
-              <p class="hint" id="rec-status" role="status">Plays the reel once from the start at 1× and saves <span class="nowrap">claude-motion-reel.webm</span>.</p>
+              <p class="hint" id="rec-status" role="status">Plays the reel once at 1× and saves a 1280 × 720 <span class="nowrap">claude-motion-reel.webm</span>.</p>
               <div class="rec-progress" id="rec-progress" hidden><span id="rec-progress-bar"></span></div>
             </div>
           </div>
 
-          <div class="prop prop-export" id="export-note" hidden>
+          <div class="prop prop-export prop-text" id="export-note" hidden>
             <span class="label">Export</span>
             <div class="prop-ctl">
               <p class="hint">To export MP4, clone the repo and run <code>npm run render</code>.</p>
@@ -216,17 +218,32 @@
         <span class="label">Keyboard shortcuts</span>
         <svg class="i keys-chevron" viewBox="0 0 24 24" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
       </summary>
-      <dl class="keys-list">
-        <div><dt><kbd>Space</kbd><span class="kbd-or">or</span><kbd>K</kbd></dt><dd>Play or pause</dd></div>
-        <div><dt><kbd>J</kbd><kbd>L</kbd></dt><dd>Back or forward 1 s</dd></div>
-        <div><dt><kbd><svg class="kbd-i" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M13 8H3.5M7.5 4 3.5 8l4 4"/></svg><span class="sr-only">Left arrow</span></kbd><kbd><svg class="kbd-i" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M3 8h9.5M8.5 4l4 4-4 4"/></svg><span class="sr-only">Right arrow</span></kbd></dt><dd>Back or forward 1 frame</dd></div>
-        <div><dt><kbd>Shift</kbd><span class="kbd-or">+</span><kbd><svg class="kbd-i" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M13 8H3.5M7.5 4 3.5 8l4 4"/></svg><span class="sr-only">Left arrow</span></kbd><kbd><svg class="kbd-i" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M3 8h9.5M8.5 4l4 4-4 4"/></svg><span class="sr-only">Right arrow</span></kbd></dt><dd>Back or forward 1 s</dd></div>
-        <div><dt><kbd>Home</kbd><kbd>End</kbd></dt><dd>Start or end of the reel</dd></div>
-        <div><dt><kbd>1</kbd><span class="kbd-or">to</span><kbd id="key-last-scene">8</kbd></dt><dd>Jump to a scene</dd></div>
-        <div><dt><kbd>G</kbd></dt><dd>Safe-area guides</dd></div>
-        <div><dt><kbd>B</kbd></dt><dd>Motion blur</dd></div>
-        <div><dt><kbd>F</kbd></dt><dd>Fullscreen</dd></div>
-      </dl>
+      <div class="keys-groups">
+        <div class="keys-group" role="group" aria-labelledby="keys-g-play">
+          <p class="label keys-group-title" id="keys-g-play">Playback</p>
+          <dl class="keys-list">
+            <div><dt><kbd>Space</kbd><span class="kbd-or">or</span><kbd>K</kbd></dt><dd>Play or pause</dd></div>
+            <div><dt><kbd>J</kbd><kbd>L</kbd></dt><dd>Back or forward 1 s</dd></div>
+            <div><dt><kbd>Home</kbd><kbd>End</kbd></dt><dd>Start or end of the reel</dd></div>
+          </dl>
+        </div>
+        <div class="keys-group" role="group" aria-labelledby="keys-g-step">
+          <p class="label keys-group-title" id="keys-g-step">Step and jump</p>
+          <dl class="keys-list">
+            <div><dt><kbd><svg class="kbd-i" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M13 8H3.5M7.5 4 3.5 8l4 4"/></svg><span class="sr-only">Left arrow</span></kbd><kbd><svg class="kbd-i" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M3 8h9.5M8.5 4l4 4-4 4"/></svg><span class="sr-only">Right arrow</span></kbd></dt><dd>Back or forward 1 frame</dd></div>
+            <div><dt><kbd>Shift</kbd><span class="kbd-or">+</span><kbd><svg class="kbd-i" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M13 8H3.5M7.5 4 3.5 8l4 4"/></svg><span class="sr-only">Left arrow</span></kbd><kbd><svg class="kbd-i" viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M3 8h9.5M8.5 4l4 4-4 4"/></svg><span class="sr-only">Right arrow</span></kbd></dt><dd>Back or forward 1 s</dd></div>
+            <div><dt><kbd>1</kbd><span class="kbd-or">to</span><kbd id="key-last-scene">8</kbd></dt><dd>Jump to a scene</dd></div>
+          </dl>
+        </div>
+        <div class="keys-group" role="group" aria-labelledby="keys-g-view">
+          <p class="label keys-group-title" id="keys-g-view">View</p>
+          <dl class="keys-list">
+            <div><dt><kbd>G</kbd></dt><dd>Safe-area guides</dd></div>
+            <div><dt><kbd>B</kbd></dt><dd>Motion blur</dd></div>
+            <div><dt><kbd>F</kbd></dt><dd>Fullscreen</dd></div>
+          </dl>
+        </div>
+      </div>
     </details>
   </main>
 

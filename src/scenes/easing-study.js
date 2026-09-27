@@ -31,13 +31,13 @@ const SPRING = spring({ stiffness: 170, damping: 12 });
 // escalates left to right and ends on a curve that overshoots. `def` marks
 // superscripts as ^{…}, since the bundled fonts have no ⁵ or ⁻ glyphs.
 const CURVES = [
-  { name: 'linear', def: 'x', color: INK, fn: ease.linear },
+  { name: 'linear', def: 'x, constant speed', color: INK, fn: ease.linear },
   { name: 'inOutSine', def: 'sin^{2}(90°·x)', color: palette.cobalt, fn: ease.inOutSine },
   { name: 'inOutQuint', def: '16x^{5}, mirrored at ½', color: MINT, fn: ease.inOutQuint },
   { name: 'inOutBack', def: 'overshoot 1.70158', color: palette.violet, fn: ease.inOutBack },
   { name: 'outCubic', def: '1 − (1 − x)^{3}', color: MINT, fn: ease.outCubic },
   { name: 'outExpo', def: '1 − 2^{−10x}', color: palette.pink, fn: ease.outExpo },
-  { name: 'outElastic', def: 'period 0.3', color: AMBER, fn: ease.outElastic },
+  { name: 'outElastic', def: 'period 0.3, decay 2^{−10x}', color: AMBER, fn: ease.outElastic },
   { name: 'spring', def: 'k 170, c 12', color: palette.signal, fn: SPRING.ease },
 ];
 
@@ -142,6 +142,7 @@ function arrowhead(ctx, x, y, dx, dy, size = 7) {
   ctx.fill();
 }
 
+/** Stroke one straight segment. */
 function line(ctx, x0, y0, x1, y1) {
   ctx.beginPath();
   ctx.moveTo(x0, y0);
@@ -294,7 +295,7 @@ function atlasAt(px, cards) {
     });
   });
 
-  if (atlases.size >= 3) atlases.clear();
+  if (atlases.size >= 2) atlases.clear();
   atlases.set(px, A);
   return A;
 }
@@ -340,6 +341,7 @@ function slidingText(ctx, text, x, y, offset) {
   ctx.restore();
 }
 
+/** Offset of a header line that slides up into its mask at tIn and out of it at tOut. */
 const slideY = (t, tIn, tOut) =>
   (1 - ease.outCubic(seg(t, tIn, tIn + 0.5))) * 24 - ease.inBack(seg(t, tOut, tOut + 0.35)) * 24;
 

@@ -9,6 +9,7 @@
   --surface: #15171F;
   --surface-2: #1C1F2A;
   --surface-3: #262A37;
+  --surface-4: #2D3242;
   --line: #2A2E3B;
   --line-2: #3A3F4F;
   --line-3: #4A5063;
@@ -18,8 +19,6 @@
   --accent: #FFB547;
   --accent-hover: #FFC46E;
   --accent-ink: #1B1306;
-  --accent-soft: rgba(255, 181, 71, 0.13);
-  --accent-soft-2: rgba(255, 181, 71, 0.2);
   --rec: #FF4D3A;
   --stage: #07080B;
   --scrim: rgba(9, 10, 14, 0.6);
@@ -31,9 +30,10 @@
   --gutter: clamp(16px, 3vw, 32px);
   --radius: 8px;
   --ctl: 40px;
-  /* Everything around the stage on the first screen: header, console, gaps
-     and a little air below the timeline. */
-  --chrome: 272px;
+  /* Everything on the first screen except the picture: the header and gaps
+     above the stage, the console below it and a little air. player.js
+     measures the real value; this is the first-paint estimate. */
+  --chrome: 300px;
 }
 
 /* ---------- Base ---------- */
@@ -127,23 +127,18 @@ code {
 
 /* ---------- Page ---------- */
 
-/* The column narrows on short screens so stage, transport and timeline
-   fit on the first screen together. */
+/* The column keeps its width whatever the window height; on short screens
+   the picture shrinks inside the monitor instead (see .frame). The gutters
+   also clear a notch or rounded corners in landscape. */
 .page {
   width: 100%;
-  max-width: min(1280px, max(760px, calc((100vh - var(--chrome)) * 16 / 9 + 2 * var(--gutter) + 2px)));
+  max-width: 1280px;
   margin-inline: auto;
-  padding-inline: var(--gutter);
+  padding-inline: max(var(--gutter), env(safe-area-inset-left, 0px)) max(var(--gutter), env(safe-area-inset-right, 0px));
   padding-block: 18px 40px;
   display: flex;
   flex-direction: column;
   gap: 20px;
-}
-
-@supports (height: 100svh) {
-  .page {
-    max-width: min(1280px, max(760px, calc((100svh - var(--chrome)) * 16 / 9 + 2 * var(--gutter) + 2px)));
-  }
 }
 
 .main {
@@ -221,10 +216,13 @@ code {
   overflow: hidden;
 }
 
+/* The picture takes the monitor's full width when the window is tall enough
+   for stage, transport and timeline together. On shorter windows it is
+   fitted to the height left over and pillarboxed on the dark stage, like an
+   editor's viewer, but never below half the monitor's width. */
 .frame {
   position: relative;
-  width: 100%;
-  max-width: 100%;
+  width: min(100%, max(50%, calc((100vh - var(--chrome)) * 16 / 9)));
   aspect-ratio: 16 / 9;
   margin-inline: auto;
   overflow: hidden;
@@ -234,6 +232,26 @@ code {
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
   container: frame / inline-size;
+}
+
+@supports (height: 100svh) {
+  .frame {
+    width: min(100%, max(50%, calc((100svh - var(--chrome)) * 16 / 9)));
+  }
+}
+
+/* Too short for the console to share the first screen (a phone held
+   sideways): let the picture fill the height and scroll to the controls. */
+@media (max-height: 540px) {
+  .frame {
+    width: min(100%, calc((100vh - 24px) * 16 / 9));
+  }
+
+  @supports (height: 100svh) {
+    .frame {
+      width: min(100%, calc((100svh - 24px) * 16 / 9));
+    }
+  }
 }
 
 [data-ready="false"] .frame {
@@ -304,14 +322,16 @@ code {
   stroke-width: 3;
 }
 
+/* Neutral, like a monitor's markers: amber stays for the playhead, focus
+   and play. Action safe is dashed, title safe solid. */
 .g-action {
-  stroke: rgba(236, 232, 224, 0.9);
+  stroke: rgba(236, 232, 224, 0.72);
   stroke-dasharray: 6 5;
 }
 
 .g-title,
 .g-cross {
-  stroke: var(--accent);
+  stroke: rgba(236, 232, 224, 0.95);
 }
 
 .gl {
@@ -319,8 +339,8 @@ code {
   padding: 4px 6px;
   border-radius: 3px;
   background: rgba(9, 10, 14, 0.72);
-  font: 500 9.5px/1 var(--mono);
-  letter-spacing: 0.09em;
+  font: 500 10.5px/1 var(--mono);
+  letter-spacing: 0.08em;
   text-transform: uppercase;
   white-space: nowrap;
 }
@@ -328,13 +348,13 @@ code {
 .gl-action {
   left: calc(5% + 6px);
   bottom: calc(5% + 6px);
-  color: var(--text);
+  color: var(--muted);
 }
 
 .gl-title {
   left: calc(10% + 6px);
   bottom: calc(10% + 6px);
-  color: var(--accent);
+  color: var(--text);
 }
 
 @container frame (max-width: 600px) {
@@ -393,10 +413,48 @@ code {
   margin-left: 4px;
 }
 
+.stage-play .i-replay {
+  display: none;
+  width: 34px;
+  height: 34px;
+  margin-left: 0;
+}
+
+[data-at-end="true"] .stage-play .i-play {
+  display: none;
+}
+
+[data-at-end="true"] .stage-play .i-replay {
+  display: block;
+}
+
 .stage-play:hover {
   border-color: var(--accent);
   color: var(--accent);
   transform: scale(1.04);
+}
+
+/* After a seek or frame step the button waits in a corner, out of the way
+   of the frame being inspected. */
+.stage-play[data-mode="corner"] {
+  left: 14px;
+  top: auto;
+  bottom: 14px;
+  width: 44px;
+  height: 44px;
+  margin: 0;
+  border-width: 1px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+}
+
+.stage-play[data-mode="corner"] svg {
+  width: 18px;
+  height: 18px;
+  margin-left: 2px;
+}
+
+.stage-play[data-mode="corner"]:hover {
+  transform: none;
 }
 
 @container frame (max-width: 520px) {
@@ -410,6 +468,25 @@ code {
     width: 22px;
     height: 22px;
     margin-left: 2px;
+  }
+
+  .stage-play .i-replay {
+    width: 25px;
+    height: 25px;
+    margin-left: 0;
+  }
+
+  .stage-play[data-mode="corner"] {
+    left: 8px;
+    bottom: 8px;
+    width: 40px;
+    height: 40px;
+    margin: 0;
+  }
+
+  .stage-play[data-mode="corner"] svg {
+    width: 16px;
+    height: 16px;
   }
 }
 
@@ -522,20 +599,24 @@ code {
   border-left: 1px solid var(--line);
 }
 
+/* Narrower consoles keep one row: the timecode stacks over the frame
+   number and the spacing tightens. */
 @container console (max-width: 880px) {
   .transport {
-    padding: 6px 8px 8px;
-    row-gap: 6px;
+    gap: 8px;
+    padding-inline: 8px;
+  }
+
+  .t-nav .btn-play {
+    margin-right: 4px;
   }
 
   .t-time {
-    margin-left: auto;
     flex-direction: column;
-    align-items: flex-end;
+    align-items: flex-start;
     justify-content: center;
-    gap: 6px;
-    padding: 0 4px 0 10px;
-    border-left: 0;
+    gap: 5px;
+    padding-inline: 12px 0;
   }
 
   .tc {
@@ -543,8 +624,55 @@ code {
   }
 
   .t-right {
+    gap: 6px;
+  }
+
+  .t-toggles {
+    padding-left: 6px;
+  }
+}
+
+@container console (710px < width <= 880px) {
+  .transport {
+    gap: 6px;
+    padding-inline: 6px;
+  }
+
+  .t-nav,
+  .t-toggles {
+    gap: 0;
+  }
+
+  .t-nav .btn-play {
+    margin-right: 2px;
+  }
+
+  .t-time {
+    padding-left: 8px;
+  }
+}
+
+/* Phones: two rows, buttons and timecode above speed and toggles. */
+@container console (max-width: 710px) {
+  .transport {
+    padding: 6px 8px 8px;
+    row-gap: 6px;
+  }
+
+  .t-time {
+    margin-left: auto;
+    align-items: flex-end;
+    gap: 6px;
+    padding: 0 4px 0 10px;
+    border-left: 0;
+  }
+
+  #frame-no {
+    min-width: 0;
+  }
+
+  .t-right {
     width: 100%;
-    margin-left: 0;
     justify-content: space-between;
     padding-top: 8px;
     border-top: 1px solid var(--line);
@@ -572,6 +700,7 @@ code {
 
 /* Icon buttons */
 .btn {
+  position: relative;
   display: inline-grid;
   place-items: center;
   flex: none;
@@ -596,13 +725,27 @@ code {
   background: var(--surface-3);
 }
 
+/* A pressed toggle is lit, not amber: a raised surface, a bright icon and
+   a small indicator, so the play button stays the one amber control. */
 .btn[aria-pressed="true"] {
-  background: var(--accent-soft);
-  color: var(--accent);
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.btn[aria-pressed="true"]::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: 4px;
+  width: 4px;
+  height: 4px;
+  margin-left: -2px;
+  border-radius: 50%;
+  background: var(--accent);
 }
 
 .btn[aria-pressed="true"]:hover {
-  background: var(--accent-soft-2);
+  background: var(--surface-4);
 }
 
 .btn:disabled {
@@ -633,16 +776,19 @@ code {
 }
 
 .btn-play .i-pause,
+.btn-play .i-replay,
 .btn .i-fs-exit {
   display: none;
 }
 
 [data-playing="true"] .btn-play .i-play,
+[data-at-end="true"] .btn-play .i-play,
 [data-fullscreen="true"] .btn .i-fs-enter {
   display: none;
 }
 
 [data-playing="true"] .btn-play .i-pause,
+[data-at-end="true"] .btn-play .i-replay,
 [data-fullscreen="true"] .btn .i-fs-exit {
   display: block;
 }
@@ -710,6 +856,13 @@ code {
   opacity: 0.4;
 }
 
+/* After the base .seg rules, so these win. */
+@container console (710px < width <= 880px) {
+  .seg-speed span {
+    padding-inline: 6px;
+  }
+}
+
 @container console (max-width: 400px) {
   .seg-speed span {
     padding-inline: 7px;
@@ -724,13 +877,16 @@ code {
   overflow-x: clip;
 }
 
+/* Vertical swipes scroll the page; sideways drags and taps scrub
+   (timeline.js waits for the gesture to show which it is). */
 .timeline {
   position: relative;
   border-radius: 4px;
   cursor: pointer;
-  touch-action: pan-y;
+  touch-action: pan-y pinch-zoom;
   user-select: none;
   -webkit-user-select: none;
+  -webkit-touch-callout: none;
   -webkit-tap-highlight-color: transparent;
 }
 
@@ -748,7 +904,7 @@ code {
 
 .ruler {
   position: relative;
-  height: 22px;
+  height: 24px;
 }
 
 .tick {
@@ -768,8 +924,8 @@ code {
   position: absolute;
   top: 2px;
   padding-left: 5px;
-  font: 400 9.5px/1 var(--mono);
-  letter-spacing: 0.03em;
+  font: 400 10.5px/1 var(--mono);
+  letter-spacing: 0.02em;
   font-variant-numeric: tabular-nums;
   color: var(--faint);
   white-space: nowrap;
@@ -780,8 +936,9 @@ code {
   height: 44px;
 }
 
-/* A scene clip. --c is the scene colour; --in is the incoming transition's
-   share of the whole reel, so the label starts after the overlap. */
+/* A scene clip. --c is the scene colour; --in and --out are the incoming
+   and outgoing overlaps as shares of the whole reel, so the label sits in
+   the stretch that no transition covers. */
 .clip {
   position: absolute;
   top: 0;
@@ -791,7 +948,7 @@ code {
   justify-content: center;
   gap: 4px;
   min-width: 0;
-  padding: 0 8px 3px calc(var(--in, 0) * 100% + 8px);
+  padding: 0 calc(var(--out, 0) * 100% + 8px) 3px calc(var(--in, 0) * 100% + 8px);
   border-radius: 4px;
   overflow: hidden;
   background: var(--surface-2);
@@ -812,8 +969,8 @@ code {
 }
 
 .clip-num {
-  font: 500 9.5px/1 var(--mono);
-  letter-spacing: 0.06em;
+  font: 500 10.5px/1 var(--mono);
+  letter-spacing: 0.04em;
   color: var(--muted);
 }
 
@@ -838,6 +995,21 @@ code {
   color: var(--text);
 }
 
+/* Too narrow for the whole title: show the scene number alone (timeline.js
+   measures each title against the room its clip has). */
+.clip.is-compact {
+  padding-right: calc(var(--out, 0) * 100% + 4px);
+  padding-left: calc(var(--in, 0) * 100% + 6px);
+}
+
+.clip.is-compact .clip-name {
+  display: none;
+}
+
+.clip.is-compact .clip-num {
+  font-size: 11px;
+}
+
 /* Transition overlap: both scenes are on screen here. */
 .xfade {
   position: absolute;
@@ -858,19 +1030,6 @@ code {
 }
 
 @container console (max-width: 640px) {
-  .clip {
-    padding-right: 4px;
-    padding-left: calc(var(--in, 0) * 100% + 5px);
-  }
-
-  .clip-name {
-    display: none;
-  }
-
-  .clip-num {
-    font-size: 10px;
-  }
-
   .tick-label:not(.ten) {
     display: none;
   }
@@ -934,7 +1093,7 @@ code {
   border-radius: 3px;
   background: var(--surface-3);
   box-shadow: 0 0 0 1px var(--line-3);
-  font: 500 9.5px/1 var(--mono);
+  font: 500 10.5px/1 var(--mono);
   font-variant-numeric: tabular-nums;
   color: var(--text);
   white-space: nowrap;
@@ -969,8 +1128,10 @@ code {
 }
 
 .panel {
+  --pad-x: 24px;
+  --pad-b: 24px;
   min-width: 0;
-  padding: 20px 24px 24px;
+  padding: 20px var(--pad-x) var(--pad-b);
 }
 
 .panel-now {
@@ -988,12 +1149,18 @@ code {
   }
 
   .panel {
-    padding: 18px 16px 20px;
+    --pad-x: 16px;
+    --pad-b: 20px;
+    padding-top: 18px;
   }
 
   .panel + .panel {
     border-left: 0;
     border-top: 1px solid var(--line);
+  }
+
+  .up-next {
+    border-radius: 0;
   }
 }
 
@@ -1106,20 +1273,21 @@ code {
   background: var(--c);
 }
 
-/* Up next: pinned to the foot of the panel, jumps to the next scene. */
+/* Up next: the panel's footer, rule to rule across its full width. It
+   jumps to the next scene. */
 .up-next {
   --n: var(--muted);
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 14px;
-  width: calc(100% + 24px);
-  min-height: 48px;
-  margin: auto -12px -8px;
-  padding: 0 12px;
+  width: calc(100% + 2 * var(--pad-x));
+  min-height: 52px;
+  margin: auto calc(-1 * var(--pad-x)) calc(-1 * var(--pad-b));
+  padding: 0 var(--pad-x);
   border: 0;
   border-top: 1px solid var(--line);
-  border-radius: 0 0 6px 6px;
+  border-radius: 0 0 0 calc(var(--radius) - 1px);
   background: none;
   color: var(--text);
   text-align: left;
@@ -1131,9 +1299,19 @@ code {
   background: var(--surface-2);
 }
 
+.up-next:focus-visible {
+  outline-offset: -2px;
+}
+
 .up-next:disabled {
   cursor: default;
   background: none;
+  color: var(--muted);
+}
+
+.up-next:disabled .label,
+.up-next:disabled .up-next-in {
+  color: var(--faint);
 }
 
 .up-next-name {
@@ -1191,6 +1369,19 @@ code {
 
 .prop > .label {
   padding-top: 13px;
+}
+
+/* A row that holds only text: line the label up with its first line. */
+.prop-text > .label {
+  padding-top: 3px;
+}
+
+.prop-text .prop-ctl {
+  min-height: 0;
+}
+
+.prop-text .hint {
+  margin-top: 0;
 }
 
 .prop-ctl {
@@ -1328,12 +1519,16 @@ code {
 }
 
 .switch[aria-checked="true"] .switch-track {
-  background: var(--accent);
+  background: var(--text);
 }
 
 .switch[aria-checked="true"] .switch-thumb {
   transform: translateX(16px);
-  background: var(--accent-ink);
+  background: var(--bg);
+}
+
+.switch[aria-checked="true"] .switch-text {
+  color: var(--text);
 }
 
 .switch-text {
@@ -1423,13 +1618,29 @@ code {
   transform: rotate(180deg);
 }
 
-/* Keys sit right-aligned against their description, so each pair reads as one. */
+/* Three groups side by side (playback, stepping, view), stacked when narrow.
+   Keys sit right-aligned against their description, so each pair reads as one. */
+.keys-groups {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px 40px;
+  padding: 2px 16px 18px;
+}
+
+.keys-group {
+  min-width: 0;
+}
+
+.keys-group-title {
+  margin: 0 0 10px;
+  padding-left: 138px;
+  color: var(--faint);
+}
+
 .keys-list {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-  gap: 8px 48px;
+  gap: 8px;
   margin: 0;
-  padding: 2px 16px 16px;
 }
 
 .keys-list > div {
@@ -1438,6 +1649,12 @@ code {
   align-items: center;
   column-gap: 14px;
   min-width: 0;
+}
+
+@container page (max-width: 900px) {
+  .keys-groups {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .keys-list dt {
