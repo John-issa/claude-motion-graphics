@@ -1,9 +1,12 @@
 # Claude Motion Reel
 
+[![CI](https://github.com/John-issa/claude-motion-graphics/actions/workflows/ci.yml/badge.svg)](https://github.com/John-issa/claude-motion-graphics/actions/workflows/ci.yml)
+
 A motion graphics showreel that renders live in the browser, frame by frame, from
-a small motion engine written for it. There are no video files and no animation
-libraries: every frame is computed on demand from the current time, so you can
-scrub, step frame by frame, type your own title into it, and export it to video.
+a small motion engine written for it. There are no video files, no audio files
+and no animation libraries: every frame is computed on demand from the current
+time, and the soundtrack is synthesized from the same timeline. You can scrub,
+step frame by frame, type your own title into it, and export it to video.
 
 ![Contact sheet of the reel, one frame every 1.5 seconds](media/reel-sheet.jpg)
 
@@ -28,27 +31,33 @@ open dist/index.html
 | ← / → | One frame (Shift: one second) |
 | Home / End | Start / end |
 | 1 – 8 | Jump to a scene |
+| S | Sound |
 | G | Safe-area guides |
 | B | Motion blur |
 | F | Fullscreen |
 
 Type into **Title** to put your own words into the title card, the particle scene
-and the end card. **Shuffle** changes the seed behind every generative element.
+and the end card (it starts as NUP). **Shuffle** changes the seed behind every
+generative element. **Sound** plays the soundtrack (browsers only allow audio
+after a click, so it starts off). **Record WebM** plays the reel once and saves
+it, with sound if it's on.
 
 ## The scenes
 
+<!-- scenes:start -->
 | # | Scene | Length | Techniques |
 | --- | --- | --- | --- |
 | 01 | Title Sequence | 6.0 s | Per-glyph layout that keeps kerning · Closed-form spring physics · Variable font weight animation · Mask reveals · SMPTE timecode from the frame counter |
-| 02 | Particle Typography | 7.0 s | 6,100 particles in closed form · Curl-noise flow field · Text sampled into a point cloud · 3D sphere and torus in perspective · Additive light, splatted in one pass |
-| 03 | Easing Study | 6.5 s | Penner easing family · Damped spring in closed form · One clock drives every panel · Spacing charts from eased values · Each card exits on its own curve |
-| 04 | Overprint | 6.0 s | Multiply overprint · Procedural halftone · Outline morphing with resampled polygons · Misregistration on twos |
+| 02 | Particle Typography | 7.0 s | 6,300 particles in closed form · Curl-noise flow field · Text sampled into a point cloud · 3D sphere and torus in perspective · Additive light, splatted in one pass |
+| 03 | Easing Study | 6.5 s | Penner easing family · Damped spring in closed form · One clock drives every panel · Spacing charts from eased values · Each card exits on its curve, reversed |
+| 04 | Risograph | 6.0 s | Multiply overprint · Procedural halftone · Outline morphing with resampled polygons · Misregistration on twos |
 | 05 | Data Story | 7.0 s | Every number read from the reel's own timeline · Odometer digits in fixed-width cells · Staggered bar growth with measured labels · Live playhead at the true global time |
 | 06 | Wave Field | 6.5 s | Perspective projection from scratch · Painter's-algorithm depth sort · Flat shading, three light facets · Two-source wave interference |
 | 07 | Liquid Metal | 7.0 s | Raymarched signed distance fields · Smooth-minimum blending · Thin-film iridescence · Analytic inter-reflections · WebGL composited into the 2D frame |
 | 08 | End Card | 5.5 s | Motion paths with Bézier handles · Spring-settled lockup · Credits computed from the reel timeline · Seamless loop into the title |
 
 Total running time 46.1 s (2,766 frames at 60 fps), with scenes overlapping during transitions.
+<!-- scenes:end -->
 
 ## How it works
 
@@ -63,6 +72,12 @@ and get the same pixels. That one rule is what makes everything else here work:
   sub-frames across a 180° shutter and averages them.
 - **Export** is exact: `npm run render` steps through every frame in headless
   Chromium and pipes them to ffmpeg, with no dropped or duplicated frames.
+- **Sound follows the same timeline.** `score.js` composes a score from the
+  scenes and their transitions: a chord pad per scene that crossfades through
+  each transition, a whoosh landing on every cut, and hits on each scene's own
+  visual beats, which scenes declare with `cues()`. The player plays it live,
+  with the audio clock leading so picture and sound can't drift; the exporter
+  renders it offline into the MP4.
 
 The engine (`src/engine/`) is small and dependency-free:
 
@@ -75,6 +90,8 @@ The engine (`src/engine/`) is small and dependency-free:
 | `shapes.js` | Outline generation, resampling, morphing and partial-stroke drawing |
 | `gl.js` | A shared WebGL layer for full-screen fragment shaders, composited into the 2D frame |
 | `reel.js` | The timeline: places scenes, overlaps them, composites seven transition types, adds grain, vignette, chapter slugs and motion blur |
+| `score.js` | The soundtrack, composed from the timeline and each scene's cues |
+| `audio.js` | Web Audio synthesis (pads, FM bells, plucks, kicks, noise whooshes, impacts) into a reverb and compressor bus; live scheduling and offline rendering |
 
 Scenes live in `src/scenes/`, one module each. [SCENES.md](SCENES.md) is the
 contract for writing a new one.
@@ -90,7 +107,11 @@ npm run render -- --width 1280 --fps 30          # smaller and faster
 npm run render -- --motion-blur 8                # 8 sub-frames per frame
 npm run render -- --params '{"title":"HELLO"}'   # your own title
 npm run render -- --gif media/preview.gif        # also write a GIF
+npm run render -- --no-audio                     # leave out the soundtrack
 ```
+
+The soundtrack is rendered offline from the same score the player uses and
+muxed in as AAC.
 
 ## Checking the work
 
@@ -101,6 +122,11 @@ node scripts/snap.mjs --scene particles           # contact sheet of one scene
 node scripts/snap.mjs --scene particles --audit   # determinism check: renders out of order and compares pixels
 node scripts/snap.mjs --scene particles --bench   # milliseconds per frame
 ```
+
+For the soundtrack, the harness page (`npm run dev`, then
+`/tools/harness.html`) has `__audio()` for levels, peaks and clipping, and
+`__spectrogram()` for a picture of the whole score with scene boundaries
+marked. CI runs `npm test`, `npm run check` and the build on every push.
 
 ## Layout
 
