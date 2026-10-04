@@ -52,7 +52,9 @@ const SHADE_FLOOR = '#1B1D23';
 const EDGE = 'rgba(11,12,16,0.2)';
 
 // Ground: floor plate, per-cell occlusion skirts and cast shadows.
-const FLOOR = 0.5; // darkness of the ground inside the field once it has risen
+const FLOOR = 0.5; // darkness of the ground inside the field once it has risen…
+// …and while it is flat, so slivers of ground glimpsed between tiles don't sparkle
+const FLOOR_FLAT = 0.3;
 const FLOOR_EDGE = HALF + 0.52; // floor plate half-size: a hair beyond the outer columns
 const SKIRT = 0.6; // occlusion skirt half-size: covers the gaps on every side of a cell
 const AO = Array.from({ length: 8 }, (_, i) => `rgba(11,12,16,${((i + 1) * 0.04).toFixed(2)})`);
@@ -60,16 +62,24 @@ const SHADOW = 'rgba(11,12,16,0.14)';
 const SUN = [0.5, 0.18]; // shadow offset per unit height: screen-right, away
 const BLUR = 4.5; // ground softness, design px: it is drawn this much smaller, then scaled up
 
-// Ripples: h = A·sin(k·d − ω·t) per source.
+// Ripples: h = A·sin(k·d − ω·t) per source. The camera looks down the x = z
+// diagonal, so the sources sit on it, A far and B near: their interference
+// fringes then run across the frame instead of pointing at the lens.
 const K = TAU / 6;
 const OMEGA = TAU / 1.3;
-const SRC = [2.8, -2.8]; // B's position; A slides from the centre to the mirror image
-const A_SLIDE = [1.5, 2.6]; // A makes room for B
-const T_B = 2.05; // the second source drops
-const FRONT_V = 8; // how fast B's ripples spread, units per second
-const FRONT_W = 2.5; // softness of B's leading edge
-const SPLASH = 0.9; // extra amplitude on B's first ring…
-const SPLASH_DECAY = 0.45; // …fading with this time constant (s)
+const SRC_A = [-3.5, -3.5]; // A starts at the centre and slides here
+const SRC_B = [3.5, 3.5]; // B lands on this cell
+const A_SLIDE = [1.45, 2.45];
+// A ducks while B lands, so B's first ring crosses a quiet field.
+const DUCK = [[1.65, 1], [1.95, 0.5, 'inOutSine'], [2.45, 0.5], [2.85, 1, 'inOutSine']];
+const T_B = 2.0; // B lands: its column spikes…
+const T_RING = 2.12; // …then drops and throws a ring
+const SPIKE = 4.3;
+const RING_V = 9; // how fast B's ring and wave front spread, units per second
+const RING_W = 1.0; // half-width of the splash ring
+const SPLASH = 2.4; // splash ring amplitude, in wave amplitudes…
+const SPLASH_DECAY = 0.9; // …fading with this time constant (s)
+const FRONT_W = 1.2; // softness of B's wave front
 
 // Heights, in cell units.
 const H_FLAT = 0.16;
@@ -79,56 +89,81 @@ const A_WAVE = 0.95;
 const H_MIN = 0.3; // risen troughs bottom out here instead of reaching the floor
 const SOFT = 0.35; // how gently troughs approach H_MIN
 const STEP = 0.5; // ziggurat terrace height
+const A_HOLD = 0.07; // the ziggurat breathes: a low ripple, ring by ring
+const K_HOLD = TAU / 4;
 const H_END = 0.12;
+const A_END = 0.1; // the flat grid keeps a faint ripple, as it began
 
 // Beats, in seconds: start, stagger spread, per-column duration.
+const DURATION = 6.5;
 const RISE = [0.5, 0.62, 0.7]; // outBack, centre outward
-const FIG = [3.7, 0.5, 0.55]; // outBack, centre outward
-const COLLAPSE = [5.0, 0.6, 0.5]; // inBack, centre outward
+const FIG = [4.0, 0.4, 0.55]; // outBack, square rings outward
+// Collapse, timed against the next scene's transition: the centre bottoms out
+// as it starts, and the outer rings are still falling when it reaches them.
+const NEXT_IN = 0.9; // the next scene's transition, if the reel has no scene after this one
+const COLLAPSE_LEAD = 0.45; // ring 0 starts this long before that transition
+const COLLAPSE_SPAN = 0.55; // ring 7 starts this much later…
+const COLLAPSE_SHAPE = 0.75; // …with the front accelerating outward
+const COLLAPSE_D = 0.45; // per ring
+const WIND_UP = 2.6; // back-ease overshoot: the terraces lift ~20% before the slam
 
 // Camera.
-const FOCAL = 2700; // design px
+const FOCAL = 2500; // design px
 const CX = 960;
 const CY = 540;
 
 const BAND = 48; // physical px per composite band
 
 /**
- * Ink → cobalt → mint, pre-shaded for the three facets. The upper half is
- * eased so crests commit to mint instead of lingering in the in-between teal.
+ * Ink → cobalt → mint by height, pre-shaded for the three facets. Cobalt turns
+ * to mint over a short step, so in-between teal is rare and mint marks only
+ * constructive crests, the splash and the ziggurat's crown.
  */
 function colourTables() {
-  const css = ([r, g, b], k) => `rgb(${Math.round(r * k)},${Math.round(g * k)},${Math.round(b * k)})`;
+  const css = ([r, g, b]) => `rgb(${Math.round(r)},${Math.round(g)},${Math.round(b)})`;
+  const scale = (c, k) => c.map((v) => v * k);
   const top = [];
   const lit = [];
   const shade = [];
   for (let l = 0; l < LEVELS; l++) {
-    const v = (l / (LEVELS - 1)) * 2;
-    const c = v < 1 ? mixRGB(RAMP[0], RAMP[1], v) : mixRGB(RAMP[1], RAMP[2], smoothstep(0.15, 0.85, v - 1));
-    top.push(css(c, 1));
-    lit.push(css(c, LIT));
-    shade.push(css(c, SHADE));
+    const h = lerp(H_LO, H_TOP, l / (LEVELS - 1));
+    const toCobalt = clamp01((h - H_LO) / (H_COBALT - H_LO));
+    const c = mixRGB(mixRGB(INK, COBALT, toCobalt), MINT, smoothstep(H_MINT[0], H_MINT[1], h));
+    // Below about half-way to cobalt the dimmed sides fade to the facet floor.
+    const dark = 1 - smoothstep(0, 0.45, toCobalt);
+    top.push(css(c));
+    lit.push(css(mixRGB(scale(c, LIT), LIT_FLOOR, dark)));
+    shade.push(css(mixRGB(scale(c, SHADE), SHADE_FLOOR, dark)));
   }
   return { top, lit, shade };
 }
 
+/** Back ease with a chosen overshoot: dips below 0 (the wind-up), then lands on 1. */
+const windUp = (x) => (x <= 0 ? 0 : x >= 1 ? 1 : (WIND_UP + 1) * x * x * x - WIND_UP * x * x);
+
 /** Column heights at time t: rise, ripples and interference, figure, collapse. */
 function heights(st, t) {
   const slide = eseg(t, A_SLIDE[0], A_SLIDE[1], 'inOutCubic');
-  const ax = -SRC[0] * slide;
-  const az = -SRC[1] * slide;
-  const phB = t - T_B;
+  const ax = SRC_A[0] * slide;
+  const az = SRC_A[1] * slide;
+  const duck = kf(t, DUCK);
+  const phase = OMEGA * t;
+  const age = t - T_RING; // time since B released its ring
+  const front = RING_V * age; // radius of B's ring and wave front
+  const splash = age > 0 ? SPLASH * Math.exp(-age / SPLASH_DECAY) : 0;
+  // B's own column: up fast with a little overshoot, held, then dropped as it lets go.
+  const spike = ease.outBack(seg(t, T_B, T_B + 0.1)) * (1 - ease.inOutCubic(seg(t, T_RING, T_RING + 0.2)));
   for (let k = 0; k < COUNT; k++) {
     const r = ease.outBack(seg(t, RISE[0] + st.riseDelay[k], RISE[0] + st.riseDelay[k] + RISE[2]));
-    let w = Math.sin(K * Math.hypot(st.x[k] - ax, st.z[k] - az) - OMEGA * t);
-    if (phB > 0) {
-      const dB = st.dB[k];
-      const front = smoothstep(0, FRONT_W, FRONT_V * phB - dB);
-      if (front > 0) {
-        const age = Math.max(0, phB - dB / FRONT_V); // time since B's front arrived here
-        // Starts with a dip: sin(k·d − ω·t) is negative just after the drop.
-        w += Math.sin(K * dB - OMEGA * phB) * front * (1 + SPLASH * Math.exp(-age / SPLASH_DECAY));
-      }
+    let w = duck * Math.sin(K * Math.hypot(st.x[k] - ax, st.z[k] - az) - phase);
+    if (age > 0) {
+      const d = st.dB[k];
+      // B runs in antiphase with A, so the two cancel wherever dA = dB: along
+      // the perpendicular bisector, a calm street straight through the centre.
+      const on = smoothstep(0, FRONT_W, front - d);
+      if (on > 0) w -= Math.sin(K * d - phase) * on;
+      const u = (d - front) / RING_W;
+      if (splash > 0.01 && u > -3 && u < 3) w += splash * Math.exp(-u * u);
     }
     let y = lerp(H_FLAT, H_BASE, r) + lerp(A_FLAT, A_WAVE, r) * w;
     // Soft floor: below lo + soft, heights ease exponentially towards lo, so
@@ -137,18 +172,22 @@ function heights(st, t) {
     const lo = H_MIN * risen;
     const soft = SOFT * risen;
     if (soft > 0 && y < lo + soft) y = lo + soft * Math.exp((y - lo - soft) / soft);
+    if (k === st.kB && spike !== 0) y = lerp(y, SPIKE, spike);
     const f = ease.outBack(seg(t, FIG[0] + st.figDelay[k], FIG[0] + st.figDelay[k] + FIG[2]));
-    y = lerp(y, st.figH[k], f);
-    const c = ease.inBack(seg(t, COLLAPSE[0] + st.colDelay[k], COLLAPSE[0] + st.colDelay[k] + COLLAPSE[2]));
-    y = lerp(y, H_END, c);
+    if (f !== 0) y = lerp(y, st.figH[k] + A_HOLD * Math.sin(K_HOLD * st.ring[k] - phase), f);
+    const c = windUp(seg(t, st.colStart[k], st.colStart[k] + COLLAPSE_D));
+    if (c !== 0) y = lerp(y, H_END + A_END * Math.sin(K * st.dc[k] - phase), c);
     st.h[k] = Math.max(0.04, y);
   }
 }
 
-/** Orbiting camera: yaw drifts at a constant rate, then a crane up to top-down. */
+/**
+ * Orbiting camera: yaw drifts at a constant rate while the pitch rises enough
+ * to look down into the interference streets, then a crane up to top-down.
+ */
 function camera(t, dur) {
   const yaw = (lerp(22, 58, t / dur) * Math.PI) / 180;
-  const pitch = (kf(t, [[0, 30], [4.9, 36, 'inOutSine'], [6.5, 88, 'inOutCubic']]) * Math.PI) / 180;
+  const pitch = (kf(t, [[0, 30], [3.4, 50, 'inOutSine'], [5.0, 51], [6.5, 88, 'inOutCubic']]) * Math.PI) / 180;
   const dist = kf(t, [[0, 56], [4.9, 54, 'inOutSine'], [6.5, 66, 'inOutCubic']]);
   // Crane the target so each beat sits centred: the flat grid, the tall field
   // (which grows upward), the pyramid (whose near corner reaches down).
@@ -246,13 +285,11 @@ function drawGround(b, st, c) {
   const { h, pts, tips, skirt, ao } = st;
   let mean = 0;
   for (let k = 0; k < COUNT; k++) mean += h[k];
-  const floor = FLOOR * smoothstep(0.3, 1.6, mean / COUNT);
-  if (floor > 0.005) {
-    b.fillStyle = `rgba(11,12,16,${floor.toFixed(3)})`;
-    b.beginPath();
-    quad4(b, st.floorPts, 0);
-    b.fill();
-  }
+  const floor = lerp(FLOOR_FLAT, FLOOR, smoothstep(0.3, 1.6, mean / COUNT));
+  b.fillStyle = `rgba(11,12,16,${floor.toFixed(3)})`;
+  b.beginPath();
+  quad4(b, st.floorPts, 0);
+  b.fill();
 
   // Occlusion: how enclosed a cell is (its own height or its neighbours'
   // mean, whichever is taller), quantised so each level is a single fill.
@@ -293,20 +330,47 @@ function drawGround(b, st, c) {
   b.fill();
 }
 
-/** The columns, far to near, each as up to two sides and a top plus hairlines. */
+/**
+ * The columns, far to near: two sides and a top, then a hairline. Faces that
+ * only meet edge to edge leave anti-aliased seams where the ground shows
+ * through, so each face after the first is drawn a little larger than true
+ * and overlaps the one before it; the hairline then traces the true edge.
+ */
 function drawColumns(b, st, c, px) {
   const { h, pts, order } = st;
   const { top, lit, shade } = st.colours;
-  // A quad through four of a column's corners, given as offsets into pts.
-  const face = (o, i0, i1, i2, i3) => {
-    b.moveTo(pts[o + i0], pts[o + i0 + 1]);
-    b.lineTo(pts[o + i1], pts[o + i1 + 1]);
-    b.lineTo(pts[o + i2], pts[o + i2 + 1]);
-    b.lineTo(pts[o + i3], pts[o + i3 + 1]);
+  const q = new Float32Array(8);
+  // A quad through four of a column's corners (offsets into pts), pushed
+  // `grow` px out from its centre.
+  const face = (o, i0, i1, i2, i3, grow = 0) => {
+    q[0] = pts[o + i0];
+    q[1] = pts[o + i0 + 1];
+    q[2] = pts[o + i1];
+    q[3] = pts[o + i1 + 1];
+    q[4] = pts[o + i2];
+    q[5] = pts[o + i2 + 1];
+    q[6] = pts[o + i3];
+    q[7] = pts[o + i3 + 1];
+    if (grow > 0) {
+      const mx = (q[0] + q[2] + q[4] + q[6]) / 4;
+      const my = (q[1] + q[3] + q[5] + q[7]) / 4;
+      for (let v = 0; v < 8; v += 2) {
+        const dx = q[v] - mx;
+        const dy = q[v + 1] - my;
+        const push = grow / (Math.hypot(dx, dy) || 1);
+        q[v] += dx * push;
+        q[v + 1] += dy * push;
+      }
+    }
+    b.moveTo(q[0], q[1]);
+    b.lineTo(q[2], q[3]);
+    b.lineTo(q[4], q[5]);
+    b.lineTo(q[6], q[7]);
     b.closePath();
   };
-  const sideX = (o, s) => (s > 0 ? face(o, 2, 4, 12, 10) : face(o, 0, 6, 14, 8));
-  const sideZ = (o, s) => (s > 0 ? face(o, 4, 6, 14, 12) : face(o, 0, 2, 10, 8));
+  const sideX = (o, s, g) => (s > 0 ? face(o, 2, 4, 12, 10, g) : face(o, 0, 6, 14, 8, g));
+  const sideZ = (o, s, g) => (s > 0 ? face(o, 4, 6, 14, 12, g) : face(o, 0, 2, 10, 8, g));
+  const overlap = 0.6; // physical px
   // A side is lit when its normal points screen-left (negative camera x).
   const xPosLit = c.rx < 0;
   const zPosLit = c.rz < 0;
@@ -315,7 +379,7 @@ function drawColumns(b, st, c, px) {
   for (let n = 0; n < COUNT; n++) {
     const k = order[n];
     const o = k * 16;
-    const lvl = Math.round(clamp01((h[k] - H_LO) / (H_HI - H_LO)) * (LEVELS - 1));
+    const lvl = Math.round(clamp01((h[k] - H_LO) / (H_TOP - H_LO)) * (LEVELS - 1));
     // Back-face culling for an axis-aligned box: a side is visible when the
     // eye is beyond its plane. Sides under half a pixel tall are skipped.
     const tall = Math.hypot(pts[o + 8] - pts[o], pts[o + 9] - pts[o + 1]) > 0.5;
@@ -324,33 +388,35 @@ function drawColumns(b, st, c, px) {
     if (sx) {
       b.fillStyle = (sx > 0) === xPosLit ? lit[lvl] : shade[lvl];
       b.beginPath();
-      sideX(o, sx);
+      sideX(o, sx, 0);
       b.fill();
     }
     if (sz) {
       b.fillStyle = (sz > 0) === zPosLit ? lit[lvl] : shade[lvl];
       b.beginPath();
-      sideZ(o, sz);
+      sideZ(o, sz, sx ? overlap : 0);
       b.fill();
     }
     b.fillStyle = top[lvl];
     b.beginPath();
-    face(o, 8, 10, 12, 14);
+    face(o, 8, 10, 12, 14, sx || sz ? overlap : 0);
     b.fill();
-    if (lvl === 0) continue; // ink on ink: the hairlines would be invisible
-    if (sx) sideX(o, sx);
-    if (sz) sideZ(o, sz);
+    // A hairline round the top; the sides already part by tone. Ink on ink
+    // would not show at all.
+    if (lvl === 0) continue;
+    b.beginPath();
+    face(o, 8, 10, 12, 14);
     b.stroke();
   }
 }
 
 /** A CPU-backed scratch canvas kept in state and (re)sized to w × h. */
-function scratch(st, name, w, h) {
+function scratch(st, name, w, h, alpha = true) {
   let canvas = st[name];
   if (!canvas) {
     canvas = st[name] = makeCanvas(w, h);
     // willReadFrequently keeps it in CPU memory, where small paths are cheap.
-    canvas.getContext('2d', { willReadFrequently: true });
+    canvas.getContext('2d', { willReadFrequently: true, alpha });
   } else if (canvas.width !== w || canvas.height !== h) {
     canvas.width = w;
     canvas.height = h;
@@ -360,7 +426,9 @@ function scratch(st, name, w, h) {
 
 /**
  * Draw the ground at 1/soften resolution and scale it back up with smoothing:
- * a cheap, deterministic blur that softens the shadows and occlusion.
+ * a cheap, deterministic blur that softens the shadows and occlusion. One
+ * bilinear step of more than about 3x (1080p and up) leaves faceted steps
+ * along soft edges, so larger factors go through a half-resolution buffer.
  */
 function softGround(b, st, c, px, pw, ph) {
   const soften = Math.max(1, BLUR * px);
@@ -374,9 +442,19 @@ function softGround(b, st, c, px, pw, ph) {
   drawGround(g, st, c);
   g.restore();
   const [x0, y0, x1, y1] = groundBounds(st, soften, gw, gh);
-  if (x1 > x0 && y1 > y0) {
-    b.drawImage(low, x0, y0, x1 - x0, y1 - y0, x0 * soften, y0 * soften, (x1 - x0) * soften, (y1 - y0) * soften);
+  if (!(x1 > x0 && y1 > y0)) return;
+  const w = x1 - x0;
+  const h = y1 - y0;
+  if (soften <= 3.25) {
+    b.drawImage(low, x0, y0, w, h, x0 * soften, y0 * soften, w * soften, h * soften);
+    return;
   }
+  const up = soften / 2; // low → half resolution
+  const mid = scratch(st, 'groundMid', Math.ceil(pw / 2), Math.ceil(ph / 2));
+  const m = mid.getContext('2d');
+  m.clearRect(0, 0, mid.width, mid.height);
+  m.drawImage(low, x0, y0, w, h, x0 * up, y0 * up, w * up, h * up);
+  b.drawImage(mid, x0 * up, y0 * up, w * up, h * up, x0 * soften, y0 * soften, w * soften, h * soften);
 }
 
 /** Bounding box of the ground layers, in pixels of the buffer scaled by 1/soften. */
@@ -463,7 +541,7 @@ function fitBands(st, pw, ph, pad) {
 export default defineScene({
   id: 'geometry',
   title: 'Wave Field',
-  duration: 6.5,
+  duration: DURATION,
   color: '#2EE6A8',
   transition: { type: 'wipe', duration: 0.7, color: '#2EE6A8', angle: -14 },
   notes: [
@@ -477,13 +555,19 @@ export default defineScene({
   // accelerated canvas, so this bright, flat-shaded scene goes without.
   post: { grain: 0 },
 
-  setup() {
+  setup({ reel }) {
+    // The collapse is scheduled against the next scene's transition window.
+    const at = reel.scenes.findIndex((e) => e.id === 'geometry');
+    const next = at >= 0 ? reel.scenes[at + 1] : undefined;
+    const out = next ? next.start - reel.scenes[at].start : DURATION - NEXT_IN;
     const x = new Float32Array(COUNT);
     const z = new Float32Array(COUNT);
     const dB = new Float32Array(COUNT);
+    const dc = new Float32Array(COUNT);
+    const ring = new Float32Array(COUNT);
     const riseDelay = new Float32Array(COUNT);
     const figDelay = new Float32Array(COUNT);
-    const colDelay = new Float32Array(COUNT);
+    const colStart = new Float32Array(COUNT);
     const figH = new Float32Array(COUNT);
     const neighbours = [];
     const dMax = Math.hypot(HALF, HALF);
@@ -493,21 +577,27 @@ export default defineScene({
       x[k] = i - HALF;
       z[k] = j - HALF;
       neighbours.push([i > 0 && k - 1, i < N - 1 && k + 1, j > 0 && k - N, j < N - 1 && k + N].filter((n) => n !== false));
-      dB[k] = Math.hypot(x[k] - SRC[0], z[k] - SRC[1]);
-      const dc = Math.hypot(x[k], z[k]) / dMax;
-      const ring = Math.max(Math.abs(x[k]), Math.abs(z[k])) - 0.5; // 0 centre … 7 edge
-      riseDelay[k] = dc * RISE[1];
-      figDelay[k] = (ring / 7) * FIG[1];
-      colDelay[k] = dc * COLLAPSE[1];
-      figH[k] = STEP * (8 - ring);
+      dB[k] = Math.hypot(x[k] - SRC_B[0], z[k] - SRC_B[1]);
+      dc[k] = Math.hypot(x[k], z[k]);
+      // Square rings, 0 at the centre to 7 at the edge: the ziggurat's
+      // terraces, and the order they lock and fall in.
+      ring[k] = Math.max(Math.abs(x[k]), Math.abs(z[k])) - 0.5;
+      riseDelay[k] = (dc[k] / dMax) * RISE[1];
+      figDelay[k] = (ring[k] / 7) * FIG[1];
+      const fall = out - COLLAPSE_LEAD + COLLAPSE_SPAN * Math.pow(ring[k] / 7, COLLAPSE_SHAPE);
+      colStart[k] = Math.min(fall, DURATION - COLLAPSE_D); // every ring lands by the last frame
+      figH[k] = STEP * (8 - ring[k]);
     }
     return {
       x,
       z,
       dB,
+      dc,
+      ring,
+      kB: (SRC_B[1] + HALF) * N + SRC_B[0] + HALF,
       riseDelay,
       figDelay,
-      colDelay,
+      colStart,
       figH,
       neighbours,
       colours: colourTables(),
@@ -525,6 +615,7 @@ export default defineScene({
       rects: null,
       field: null, // CPU-backed canvases, created on first render
       ground: null,
+      groundMid: null,
     };
   },
 
@@ -553,20 +644,37 @@ export default defineScene({
 
     // Hundreds of small path fills are cheap on a CPU-backed canvas and slow
     // on an accelerated one, so the field is rasterised off-screen at output
-    // resolution, then composited.
+    // resolution, then composited as bands that hug its silhouette.
     const pw = Math.round(W * px);
     const ph = Math.round(H * px);
-    const field = scratch(st, 'field', pw, ph);
-    const b = field.getContext('2d');
-    // Only these rectangles reach the frame, so only they need clearing: every
-    // pixel composited below is cleared and redrawn in this same frame.
     const n = fitBands(st, pw, ph, Math.ceil(BLUR * px) + 2);
     const r = st.rects;
-    for (let i = 0; i < n * 4; i += 4) b.clearRect(r[i], r[i + 1], r[i + 2], r[i + 3]);
+    let x0 = pw;
+    let y0 = ph;
+    let x1 = 0;
+    let y1 = 0;
+    for (let i = 0; i < n * 4; i += 4) {
+      x0 = Math.min(x0, r[i]);
+      y0 = Math.min(y0, r[i + 1]);
+      x1 = Math.max(x1, r[i] + r[i + 2]);
+      y1 = Math.max(y1, r[i + 1] + r[i + 3]);
+    }
+    if (x1 <= x0 || y1 <= y0) return;
+    // The buffer spans only the bands (in 128 px steps, so it is rarely
+    // resized): the whole buffer is uploaded each time it is drawn, so a
+    // smaller one composites faster. It is opaque, and only the bands are
+    // repainted, because only they reach the frame.
+    const field = scratch(st, 'field', Math.ceil((x1 - x0) / 128) * 128, Math.ceil((y1 - y0) / 128) * 128, false);
+    const b = field.getContext('2d');
+    b.save();
+    b.translate(-x0, -y0);
+    b.fillStyle = GROUND;
+    for (let i = 0; i < n * 4; i += 4) b.fillRect(r[i], r[i + 1], r[i + 2], r[i + 3]);
     softGround(b, st, c, px, pw, ph);
     drawColumns(b, st, c, px);
+    b.restore();
     for (let i = 0; i < n * 4; i += 4) {
-      ctx.drawImage(field, r[i], r[i + 1], r[i + 2], r[i + 3], r[i] / px, r[i + 1] / px, r[i + 2] / px, r[i + 3] / px);
+      ctx.drawImage(field, r[i] - x0, r[i + 1] - y0, r[i + 2], r[i + 3], r[i] / px, r[i + 1] / px, r[i + 2] / px, r[i + 3] / px);
     }
   },
 });

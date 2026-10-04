@@ -181,8 +181,8 @@ vec3 env(vec3 d, float blur) {
   col += vec3(0.35, 0.40, 0.70) * 0.30 * exp(-abs(y) * 14.0);
   float seam = 0.0083 + blur;                  // widened at constant energy
   col += vec3(0.70, 0.76, 1.00) * 0.45 * (0.0083 / seam) * exp(-abs(y - 0.004) / seam);
-  col += vec3(0.62, 0.55, 1.00) * 0.45 * softbox(d, ${box(CARD)}, vec2(0.5, 0.22), 0.25 + blur);
-  col += vec3(0.78, 0.82, 1.00) * 0.90 * softbox(d, ${box(TOP)}, vec2(0.9, 0.5), 0.35 + blur);
+  col += vec3(0.62, 0.55, 1.00) * 0.45 * softbox(d, ${box(CARD)}, vec2(0.5, 0.22), 0.12 + blur);
+  col += vec3(0.78, 0.82, 1.00) * 0.90 * softbox(d, ${box(TOP)}, vec2(0.9, 0.5), 0.15 + blur);
   col *= uLights.z;
   float key = softbox(d, uKeyC, uKeyU, uKeyV, vec2(0.26, 0.4), 0.1 + blur);
   col += vec3(1.00, 0.97, 0.93) * uLights.x * key * (0.75 + 0.25 * dot(d, uKeyV));
@@ -202,13 +202,15 @@ vec3 film(float x) {
 // and the neighbour's curvature turns that into a sweep of directions,
 // unbounded toward its rim. The lookup is prefiltered by half that sweep;
 // where it outgrows what a blurred lookup can stand for, the image gives way
-// to the surrounding reflection (base), which is what a mirror's rim reflects
-// anyway: no sparkling ring, and small or distant neighbours become soft
-// tinted spots rather than noise.
+// to what it would average to: the surrounding reflection (base) at the rim,
+// which a mirror's rim reflects anyway, and the studio's mean toward the
+// centre. No sparkling ring, and small or distant neighbours become soft
+// beads rather than noise.
 vec3 mirrored(vec3 r, vec3 n, float rad, float grow, float cone, vec3 base) {
   float ndv = clamp(-dot(n, r), 0.0, 1.0);
   float blur = cone + grow / (rad * max(ndv, 0.02));
-  vec3 img = mix(env(reflect(r, n), min(blur, 0.35)), base, smoothstep(0.12, 0.4, blur));
+  vec3 mean = mix(base, vec3(0.08, 0.085, 0.16) * uLights.z, ndv * ndv);
+  vec3 img = mix(env(reflect(r, n), min(blur, 0.35)), mean, smoothstep(0.12, 0.4, blur));
   // The film is keyed by ndv² (linear in the ray's offset from the centre):
   // ndv itself has a square-root edge that would cycle the palette inside a
   // texel and fringe the disc.
@@ -274,9 +276,10 @@ vec3 shade(vec3 p, vec3 rd, float foot) {
   }
   // Reflected pixel cone: the footprint stretches by 1/ndv toward grazing and
   // the curved mirror (radius ~ its blob's) fans it out. Mirrored neighbours
-  // blur by all of it; the studio only by its growth toward grazing, so faces
-  // stay crisp while the last texels before a silhouette are prefiltered
-  // instead of flickering.
+  // start from all of it (see mirrored); the studio blurs only by its growth
+  // toward grazing, so faces stay crisp while the last texels before a
+  // silhouette are prefiltered instead of flickering. sph: how spherical the
+  // surface still is here (1 on a blob, less on necks and bulges).
   float cone = foot / (own.w * max(ndv, 0.05));
   float blur = min(cone - foot / own.w, 0.3);
   float sph = dot(n, normalize(p - own.xyz));
