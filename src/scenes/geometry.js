@@ -4,9 +4,11 @@
 // in three facets, over a ground of cast shadows and ambient occlusion.
 //
 // Beats: 0 flat grid rippling under the wipe · 0.5 columns rise from the centre
-// · 1.5 the source slides aside · 2.05 a second source drops and the ripples
-// interfere · 3.7 heights lock into a ziggurat, centre first · 5.0 collapse to
-// flat as the camera cranes up to top-down, just ahead of the next iris.
+// · 1.45 the source slides to the far side and the field quietens · 2.0 a second
+// source lands in the foreground, spikes and throws a splash ring; the two
+// systems interfere and cancel along a calm street through the centre · 4.0
+// heights lock into a ziggurat, centre first, and breathe · 5.15 it winds up and
+// collapses ring by ring as the camera cranes to top-down, into the next iris.
 //
 // The field is rasterised in a CPU-backed buffer at output resolution (hundreds
 // of small paths are far cheaper there than on an accelerated canvas) and lands
@@ -34,12 +36,19 @@ const FOOT = 0.4; // half footprint
 
 // Colour: tops follow the ramp by height, sides are the same colour dimmed.
 const GROUND = '#E9E6DF';
-const RAMP = ['#0B0C10', '#2446FF', '#2EE6A8'];
+const INK = '#0B0C10';
+const COBALT = '#2446FF';
+const MINT = '#2EE6A8';
 const LEVELS = 96; // quantised ramp steps, so colour strings are built once
 const H_LO = 0.35; // heights at or below this are ink
-const H_HI = 3.6; // heights at or above this are mint
+const H_COBALT = 2.6; // ink → cobalt is complete here
+const H_MINT = [2.95, 3.45]; // cobalt → mint, a short step so mint stays an event
+const H_TOP = 3.6; // top of the table
 const LIT = 0.78; // sides whose normal points screen-left
 const SHADE = 0.58; // sides whose normal points screen-right
+// Ink sides would vanish into ink tops, so dark sides bottom out at these.
+const LIT_FLOOR = '#2A2C33';
+const SHADE_FLOOR = '#1B1D23';
 const EDGE = 'rgba(11,12,16,0.2)';
 
 // Ground: floor plate, per-cell occlusion skirts and cast shadows.
