@@ -44,6 +44,9 @@ generative element. **Sound** plays the soundtrack (browsers only allow audio
 after a click, so it starts off). **Record WebM** plays the reel once and saves
 it, with sound if it's on.
 
+To share the reel with a title already set, add it to the link after a `#`,
+with underscores for spaces: `…/index.html#HELLO_WORLD` opens it as HELLO WORLD.
+
 ## The scenes
 
 ![Poster frames of the eight scenes](media/reel-sheet.jpg)
@@ -145,6 +148,27 @@ scripts/              dev server, build, render, snapshot and screenshot tools
 tools/harness.*       headless page the scripts drive
 test/                 node:test suites
 ```
+
+## How it was built
+
+Claude built this in one Claude Code session, as a small studio would:
+
+1. **Foundation.** The engine, the scene contract ([SCENES.md](SCENES.md)) and
+   the tooling came first, including the headless snapshot tool that lets an
+   agent look at its own frames.
+2. **Parallel scenes.** One agent per scene, plus one for the player, worked
+   at the same time against that contract. Each rendered contact sheets of its
+   scene and critiqued them before handing back.
+3. **Independent critique.** A separate art-director agent rendered and
+   scored each piece, and the builder then polished against that critique
+   (two rounds for most scenes).
+4. **Whole-reel review.** A final fresh-eyes review looked at what per-scene
+   reviews can't see: transitions, pacing, the loop seam and the sync between
+   sound and picture. A code review followed for correctness.
+
+Determinism made all of this checkable. Every claim about a frame can be
+re-rendered and looked at, and `npm run check` proves that each scene renders
+the same pixels in any order.
 
 ## Credits
 

@@ -8,6 +8,22 @@ import { createReel } from './engine/index.js';
 import { createPlayer, cleanTitle } from './player/player.js';
 import { loadPrefs } from './player/storage.js';
 
+/**
+ * A title from the link's #anchor, e.g. …#HELLO_WORLD → "HELLO WORLD". Artifact
+ * links pass only plain anchors (letters, digits, . _ ~ -), so underscores
+ * stand in for spaces. Returns '' when there is no usable anchor.
+ */
+function titleFromHash() {
+  let raw = '';
+  try {
+    raw = decodeURIComponent((window.location.hash || '').slice(1));
+  } catch {
+    return '';
+  }
+  if (!/^[A-Za-z0-9._~-]{1,24}$/.test(raw)) return '';
+  return cleanTitle(raw.replace(/_/g, ' '));
+}
+
 function buildTarget() {
   const build = typeof window !== 'undefined' ? window.__BUILD__ : undefined;
   const target = build && build.target;
@@ -20,7 +36,8 @@ async function main() {
 
   // Restore the viewer's title and seed before setup runs, so scenes only set up once.
   const prefs = loadPrefs();
-  const title = typeof prefs.title === 'string' ? cleanTitle(prefs.title) : '';
+  // A title in the link wins over the one this viewer last typed.
+  const title = titleFromHash() || (typeof prefs.title === 'string' ? cleanTitle(prefs.title) : '');
   const seed = Number.isInteger(prefs.seed) && prefs.seed > 0 ? prefs.seed >>> 0 : undefined;
 
   const reel = createReel({ scenes, fps: 60, params: title ? { title } : {}, seed });
