@@ -416,6 +416,14 @@ export function createLiveAudio(getScore) {
     /** Create or resume the context; call from a user gesture. */
     async unlock() {
       if (!Ctx) return false;
+      // iOS mutes Web Audio under the silent switch unless the page says it
+      // is playing media (Audio Session API, Safari 16.4+). Sound here only
+      // ever starts from the viewer's own tap, so that is what this is.
+      try {
+        if (navigator.audioSession) navigator.audioSession.type = 'playback';
+      } catch {
+        // not supported: nothing to do
+      }
       if (!ac) {
         ac = new Ctx({ latencyHint: 'interactive' });
         bus = createMaster(ac);
