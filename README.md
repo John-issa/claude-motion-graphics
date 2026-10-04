@@ -96,6 +96,7 @@ npm run render -- --gif media/preview.gif        # also write a GIF
 
 ```bash
 npm test                                          # engine unit tests and the scene contract
+npm run check                                     # every scene: determinism, forbidden calls, errors, frame cost
 node scripts/snap.mjs --scene particles           # contact sheet of one scene
 node scripts/snap.mjs --scene particles --audit   # determinism check: renders out of order and compares pixels
 node scripts/snap.mjs --scene particles --bench   # milliseconds per frame

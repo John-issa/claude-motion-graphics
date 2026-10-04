@@ -9,7 +9,8 @@
     "build": "node scripts/build.mjs",
     "snap": "node scripts/snap.mjs",
     "render": "node scripts/render.mjs",
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test test/*.test.mjs",
+    "check": "node scripts/check.mjs"
   },
   "devDependencies": {
     "esbuild": "^0.25.10",

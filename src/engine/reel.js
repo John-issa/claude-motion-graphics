@@ -54,6 +54,10 @@ export function defineScene(scene) {
 }
 
 function resetState(ctx) {
+  // The current path is not part of the state save()/restore() preserves, so
+  // a path left open by the previous frame would otherwise leak into the next
+  // fill, stroke or clip and make the frame depend on render history.
+  ctx.beginPath();
   ctx.globalAlpha = 1;
   ctx.globalCompositeOperation = 'source-over';
   if ('filter' in ctx) ctx.filter = 'none';

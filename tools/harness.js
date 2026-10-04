@@ -94,10 +94,7 @@ window.__bench = ({ scene, width = 1280, frames = 60, from = 0, to } = {}) => {
 };
 
 function frameHash(canvas) {
-  const small = canvasOf(192);
-  const sctx = small.getContext('2d');
-  sctx.drawImage(canvas, 0, 0, small.width, small.height);
-  const d = sctx.getImageData(0, 0, small.width, small.height).data;
+  const d = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
   let h = 0x811c9dc5;
   for (let i = 0; i < d.length; i += 3) {
     h ^= d[i];
@@ -117,23 +114,32 @@ function frameHash(canvas) {
 
 /**
  * Determinism and hygiene audit for one scene:
- * - renders sample times in order, then shuffled with other times in between,
- *   and compares frame hashes (they must match exactly);
+ * - pass 1 renders each sample time on a fresh canvas;
+ * - pass 2 renders them in shuffled order, each on a canvas that has just
+ *   drawn a different instant of the scene, and compares pixels exactly;
  * - counts Math.random / Date.now / performance.now calls made during render;
  * - flags near-blank frames.
+ * Every canvas is an ordinary one, read back exactly once, as in the player
+ * and the exporter. (Pinning a canvas to CPU raster with willReadFrequently,
+ * or reading the same canvas repeatedly, lets Chrome switch raster paths
+ * mid-run when scenes draw GPU-backed caches, which looks like
+ * nondeterminism but isn't.)
  */
 window.__audit = ({ scene, samples = 16, width = 640 } = {}) => {
   const entry = reel.meta.scenes.find((s) => s.id === scene);
   if (!entry) throw new Error(`No scene ${scene}`);
-  const c = document.createElement('canvas');
-  c.width = width;
-  c.height = Math.round((width * 9) / 16);
-  const ctx = c.getContext('2d');
+  const height = Math.round((width * 9) / 16);
+  const fresh = () => {
+    const c = document.createElement('canvas');
+    c.width = width;
+    c.height = height;
+    return c;
+  };
   const times = Array.from({ length: samples }, (_, i) => (entry.duration * i) / (samples - 1));
 
   const calls = { random: 0, dateNow: 0, perfNow: 0 };
   const orig = { random: Math.random, dateNow: Date.now, perfNow: performance.now.bind(performance) };
-  const renderAt = (t) => {
+  const renderAt = (c, t) => {
     Math.random = () => {
       calls.random++;
       return orig.random();
@@ -147,16 +153,19 @@ window.__audit = ({ scene, samples = 16, width = 640 } = {}) => {
       return orig.perfNow();
     };
     try {
-      reel.renderScene(ctx, scene, t);
+      reel.renderScene(c.getContext('2d'), scene, t);
     } finally {
       Math.random = orig.random;
       Date.now = orig.dateNow;
       performance.now = orig.perfNow;
     }
-    return frameHash(c);
   };
 
-  const first = times.map((t) => renderAt(t));
+  const first = times.map((t) => {
+    const c = fresh();
+    renderAt(c, t);
+    return frameHash(c);
+  });
   const order = times.map((_, i) => i);
   for (let i = order.length - 1; i > 0; i--) {
     const j = (i * 7919 + 13) % (i + 1);
@@ -164,10 +173,12 @@ window.__audit = ({ scene, samples = 16, width = 640 } = {}) => {
   }
   const mismatches = [];
   for (const i of order) {
-    renderAt(entry.duration * 0.37);
-    const again = renderAt(times[i]);
-    if (again.hash !== first[i].hash) mismatches.push(Number(times[i].toFixed(3)));
+    const c = fresh();
+    renderAt(c, times[(i + Math.floor(samples / 2)) % samples]);
+    renderAt(c, times[i]);
+    if (frameHash(c).hash !== first[i].hash) mismatches.push(Number(times[i].toFixed(3)));
   }
+  mismatches.sort((a, b) => a - b);
   const blank = first.map((f, i) => ({ t: Number(times[i].toFixed(3)), std: f.std })).filter((f) => f.std < 2);
   return {
     scene,
