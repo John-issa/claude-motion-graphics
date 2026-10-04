@@ -430,11 +430,13 @@ function pose(t, balls) {
   // Lights out, once the sphere has had a lit beat to settle: the key swings
   // behind it (its reflection slides to the rim and vanishes), the studio
   // dims, and the strip leaves a crescent.
-  const leave = ease.inOutSine(seg(t, 5.9, 6.7));
+  // The lights finish leaving by ~6.5 s, so the end card (which fades in from
+  // 6.2 s) arrives over darkness instead of dissolving over a lit sphere.
+  const leave = ease.inOutSine(seg(t, 5.9, 6.5));
   const keyYaw = -0.82 - 1.2 * leave;
   const key = emitter([Math.sin(keyYaw), 0.42, Math.cos(keyYaw)]);
-  const out = ease.inOutSine(seg(t, 6.0, 6.9));
-  const lights = [2.4 * (1 - leave), 2.2 * (1 - 0.35 * out), 1 - 0.96 * out];
+  const out = ease.inOutSine(seg(t, 6.0, 6.55));
+  const lights = [2.4 * (1 - leave), 2.2 * (1 - 0.88 * out), 1 - 0.96 * out];
 
   return { balls, wob, ro, fwd, right, up, key, lights, out };
 }
