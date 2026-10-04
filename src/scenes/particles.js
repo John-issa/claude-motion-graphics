@@ -10,8 +10,24 @@
 // per-frame bloom pass, would be far over budget; the buffer takes a few ms.
 
 import {
-  defineScene, createRandom, createNoise, hash2, textPoints, balanceLines, fitSize, font,
-  makeCanvas, parse, palette, seg, ease, spring, smoothstep, pulse, TAU,
+  defineScene,
+  createRandom,
+  createNoise,
+  hash2,
+  textPoints,
+  balanceLines,
+  fitSize,
+  font,
+  makeCanvas,
+  parse,
+  palette,
+  seg,
+  ease,
+  spring,
+  smoothstep,
+  pulse,
+  TAU,
+  DEFAULT_PARAMS,
 } from '../engine/index.js';
 
 // ---------------------------------------------------------------- constants
@@ -143,7 +159,7 @@ function flowAt(F, x, y, t, out) {
 
 /** The title as a point cloud: balanced onto 1-2 lines, fitted to ~76% width, centred on its ink. */
 function titleCloud(title, seed) {
-  const text = String(title ?? '').trim() || 'MOTION';
+  const text = String(title ?? '').trim() || DEFAULT_PARAMS.title;
   const lines = balanceLines(text, 2);
   const probe = makeCanvas(4, 4).getContext('2d');
   const maxSize = lines.length > 1 ? 240 : 400;

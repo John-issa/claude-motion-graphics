@@ -6,8 +6,9 @@ import { frameAt, timecode, secs, mmss, pad, short } from './format.js';
 import { createTimeline, transitionName } from './timeline.js';
 import { savePrefs } from './storage.js';
 import { recordingSupport, startRecording, saveBlob } from './recorder.js';
+import { DEFAULT_PARAMS } from '../engine/index.js';
 
-const DEFAULT_TITLE = 'MOTION';
+const DEFAULT_TITLE = DEFAULT_PARAMS.title;
 const TITLE_MAX = 24;
 // A title change re-runs every scene's setup, which stalls a frame or two.
 // While the reel plays, wait for a longer pause in typing before applying it.
@@ -196,6 +197,8 @@ export function createPlayer({ reel, target = 'dev', prefs = {} }) {
     // The slider's range is the frames it can actually reach.
     el.timeline.setAttribute('aria-valuemax', lastT.toFixed(2));
     el.titleInput.value = reel.params.title || DEFAULT_TITLE;
+    el.titleInput.placeholder = DEFAULT_TITLE;
+    el.titleReset.title = `Back to ${DEFAULT_TITLE}`;
     showSeed();
     for (const input of qualityInputs) input.checked = input.value === state.quality;
     reel.setGrain(state.grain);

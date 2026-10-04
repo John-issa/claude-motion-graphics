@@ -64,8 +64,8 @@ async function main() {
 
   // Standalone page: the original document with everything inlined.
   const standalone = withoutLinks
-    .replace(/<\/head>/i, `${styleBlock}\n</head>`)
-    .replace(scriptTag, scriptBlock('standalone'));
+    .replace(/<\/head>/i, () => `${styleBlock}\n</head>`)
+    .replace(scriptTag, () => scriptBlock('standalone'));
 
   // Artifact fragment: title first (the host scans the first 8 KB for it),
   // then styles, the body's markup, and the script.

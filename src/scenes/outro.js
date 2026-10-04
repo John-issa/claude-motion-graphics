@@ -34,6 +34,7 @@ import {
   pulse,
   pointAt,
   TAU,
+  DEFAULT_PARAMS,
 } from '../engine/index.js';
 
 const { ink: INK, bone: BONE } = palette;
@@ -141,7 +142,7 @@ function buildPath(i, S, P1, P2, T, launch, drawAt) {
 
 function buildLayout(params, reel) {
   const c = makeCanvas(8, 8).getContext('2d');
-  const title = String(params.title || 'MOTION').toUpperCase().trim().slice(0, 24) || 'MOTION';
+  const title = String(params.title || DEFAULT_PARAMS.title).toUpperCase().trim().slice(0, 24) || DEFAULT_PARAMS.title;
   const lines = balanceLines(title, 2);
 
   // Title: fitted and balanced like the opening card, calmer and smaller.

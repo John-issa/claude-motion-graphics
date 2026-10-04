@@ -16,7 +16,7 @@ export const H = 1080;
 
 export const TRANSITIONS = ['cut', 'fade', 'wipe', 'iris', 'blinds', 'push', 'shutter'];
 
-export const DEFAULT_PARAMS = { title: 'MOTION' };
+export const DEFAULT_PARAMS = { title: 'NUP' };
 
 const DEFAULT_TRANSITION = { type: 'fade', duration: 0.5, ease: 'inOutCubic', color: null };
 const DEFAULT_GRAIN = 0.05;

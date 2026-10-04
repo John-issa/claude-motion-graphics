@@ -27,6 +27,7 @@ import {
   clamp01,
   rgba,
   hash,
+  DEFAULT_PARAMS,
 } from '../engine/index.js';
 
 const { ink: INK, bone: BONE, signal: SIGNAL } = palette;
@@ -96,7 +97,7 @@ function setLines(c, lines, size, subW) {
 /** Time-independent layout for one title string, built once in setup(). */
 function buildLayout(rawTitle, fps) {
   const c = makeCanvas(8, 8).getContext('2d');
-  const title = String(rawTitle || 'MOTION').toUpperCase().trim().slice(0, 24) || 'MOTION';
+  const title = String(rawTitle || DEFAULT_PARAMS.title).toUpperCase().trim().slice(0, 24) || DEFAULT_PARAMS.title;
   const lines = balanceLines(title, 2);
   const subFont = font(22, 'mono', 400);
   c.font = subFont;
