@@ -76,10 +76,6 @@ export function buildScore(meta, { seed = 1, cues = [] } = {}) {
           add({ t, type: 'bell', note: rnd.pick(PENTA) + 12, gain: 0.05 + rnd.next() * 0.03, decay: 2.2, pan: rnd.range(-0.7, 0.7), send: 0.6 });
         }
         break;
-      case 'easing-study':
-        // The study's shared clock, heard as a quiet ticking.
-        for (let t = t0; t < t1 - 0.2; t += 0.25) add({ t, type: 'tick', gain: 0.07, freq: 7000, pan: 0.2 });
-        break;
       case 'data': {
         // Odometer ratchet: fast at first, slowing like the digits.
         let t = t0 + 0.1;

@@ -900,6 +900,7 @@ export default defineScene({
   id: 'easing-study',
   title: 'Easing Study',
   duration: 6.5,
+  poster: 3.8,
   color: '#FFD23F',
   transition: { type: 'wipe', duration: 0.7, color: '#FFD23F' },
   slug: { color: '#0B0C10' },
@@ -913,6 +914,19 @@ export default defineScene({
     'Spacing charts from eased values',
     'Each card exits on its curve, reversed',
   ],
+  uses: [],
+  /** Sound: cards popping in, the shared clock ticking, every dot pinging as it stops. */
+  cues() {
+    const ticks = [];
+    for (let t = CLOCK_IN; t < CLOCK_OUT - 1e-6; t += 0.25) ticks.push({ t, kind: 'tick', strength: 0.9 });
+    return [
+      { t: CARDS_IN, kind: 'land', strength: 0.5 }, // top row pops in
+      { t: CARDS_IN + 0.08, kind: 'land', strength: 0.5 }, // bottom row
+      ...ticks,
+      { t: CLOCK_OUT, kind: 'shimmer', strength: 0.8 }, // the clock stops; every dot pings
+      { t: EXIT, kind: 'whoosh', dur: 0.4, strength: 0.35 }, // cards file out on their own curves
+    ];
+  },
   setup() {
     let order = 0;
     const cards = CURVES.map((c, i) => {

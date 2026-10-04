@@ -1321,6 +1321,7 @@ export default defineScene({
   id: 'particles',
   title: 'Particle Typography',
   duration: 7.0,
+  poster: 2.8,
   color: '#7B5CFF',
   transition: { type: 'iris', duration: 0.8, color: '#EFEBE3' },
   // Film grain is an 'overlay' pass that is invisible on a near-black ground
@@ -1335,6 +1336,19 @@ export default defineScene({
   ],
   poster: 2.8, // the word held, the glint crossing it
   uses: ['title', 'seed'],
+  uses: ['title', 'seed'],
+  /** Sound on the scene's beats (stage starts are seeded within narrow windows). */
+  cues: () => [
+    { t: FORM, kind: 'whoosh', dur: 1.1, strength: 0.4 }, // streams leave the swirl
+    { t: GLOW_IN[0], kind: 'land', strength: 0.7 }, // the word has formed
+    { t: SWEEP[0], kind: 'shimmer', strength: 0.8 }, // light sweeps the ink
+    { t: INHALE[0], kind: 'swell', dur: INHALE[1] - INHALE[0], strength: 0.6 }, // anticipation
+    { t: BURST, kind: 'hit', strength: 0.9 },
+    { t: 4.25, kind: 'land', strength: 0.6 }, // the sphere closes (gathers end 4.12-4.3 s)
+    { t: 4.72, kind: 'whoosh', dur: MORPH_DUR, strength: 0.35 }, // the sphere opens into a ring
+    { t: 5.5, kind: 'swell', dur: 0.6, strength: 0.6 }, // the vortex draws in
+    { t: FLASH, kind: 'hit', strength: 1.0 }, // singularity flash, then warp
+  ],
   setup,
   cues() {
     return [
