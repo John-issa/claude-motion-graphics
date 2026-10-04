@@ -7,8 +7,9 @@
 //
 // Beats: 0.03 rule draws out · 0.55 glyphs rise · the red block follows the
 // last landing (by 2.0 at the latest), then subtitle, grid and weight wave ·
-// 3.6 push-in · 4.34 subtitle out · 4.62 glyphs fall · 4.84 red floods the
-// frame · 5.24 rules gone into the frame centre as the next scene irises open.
+// push-in as the wave ends (by 3.4) · 4.34 subtitle out · 4.62 glyphs fall ·
+// 4.84 red floods the frame · 5.24 rules gone into the frame centre as the
+// next scene irises open.
 
 import {
   defineScene,
@@ -51,6 +52,15 @@ const RISE = spring({ stiffness: 190, damping: 17 }); // ~8 % overshoot, settles
 const TILT = spring({ stiffness: 120, damping: 11 }); // looser, so rotation lags position
 
 const DROP = 0.36; // seconds each glyph takes to fall out
+
+// Push-in: the lockup scales up by PUSH while the tracking opens by SPREAD
+// (a fraction of the font size per glyph slot). HEADROOM is the most the hero
+// ink grows on screen while it is visible (push, drift and the fall's tilt),
+// reserved at layout time so the pushed word stays inside title-safe.
+const PUSH = 0.06;
+const SPREAD = 0.03;
+const HEADROOM = 1.08;
+const SAFE_W = 1536; // title-safe width (x 192-1728)
 
 /**
  * Set the title lines at one size: each line sits on its own rule, stacked
@@ -104,19 +114,25 @@ function buildLayout(rawTitle, fps) {
   const subW = c.measureText(SUBTITLE).width;
 
   // Fit the word to ~77 % of the frame, then shrink until the red block (and
-  // the subtitle aligned to its edge) fits title-safe width and stays clear of
-  // the top row of the grid.
+  // the subtitle aligned to its edge) fits title-safe width, the block's top
+  // stays below y 250, and the word still fits title-safe at the height of the
+  // push-in, opened tracking included.
+  const widest = Math.max(...lines.map((ln) => Array.from(ln).length));
   let size = 300;
   for (const ln of lines) size = Math.min(size, fitSize(c, ln, 1480, { weight: BLACK, maxSize: 300 }));
   let set = setLines(c, lines, size, subW);
   for (let pass = 0; pass < 3; pass++) {
-    const k = Math.min(1536 / (set.x1 - set.x0), (AXIS_Y - 250) / (AXIS_Y - set.y0));
+    const inkW = Math.max(...set.rows.map((r) => r.inkR - r.inkL));
+    const pushed = (inkW + SPREAD * size * (widest - 1)) * HEADROOM;
+    const k = Math.min(SAFE_W / (set.x1 - set.x0), (AXIS_Y - 250) / (AXIS_Y - set.y0), SAFE_W / pushed);
     if (k >= 0.999) break;
     size *= k;
     set = setLines(c, lines, size, subW);
   }
   const { F, rows, x0, x1, y0 } = set;
   const block = { x0, x1, y0, y1: AXIS_Y };
+  const subY = AXIS_Y + 54; // subtitle baseline
+  const cy = (y0 + subY) / 2; // centre of the lockup: block, rule and subtitle
 
   // Glyphs: slot centre from the kerned layout, plus per-glyph timing.
   const all = [];
@@ -133,8 +149,10 @@ function buildLayout(rawTitle, fps) {
   const n = all.length;
   const each = Math.min(0.045, 0.62 / Math.max(1, n - 1));
   const drop = Math.min(0.03, 0.2 / Math.max(1, n - 1));
-  // The secondary beat follows the last landing, so short titles never sit idle.
+  // The secondary beat follows the last landing, and the push-in starts as the
+  // weight wave ends, so short titles never sit idle.
   const beat = Math.min(2.0, 0.55 + (n - 1) * each + 0.85);
+  const p0 = beat + 1.4;
   all.forEach((g, k) => {
     g.t0 = 0.55 + k * each; // rise
     g.tw = beat + 0.55 + ((g.cx - x0) / (x1 - x0)) * 0.6; // weight wave, swept left to right
@@ -153,10 +171,13 @@ function buildLayout(rawTitle, fps) {
     { text: `1920 × 1080 · ${fps} FPS`, x: 1824, y: 994, align: 'right', at: 0.25 },
   ].map((l) => ({ ...l, lay: l.live ? tcTemplate : layoutGlyphs(c, l.text, slateFont, 2) }));
 
+  // Registration crosses: two sparse rows centred on the lockup rather than
+  // the frame (so the block has even air above and below), kept inside
+  // title-safe.
   const crosses = [];
-  [216, 864].forEach((y, r) =>
+  [cy - 300, cy + 300].forEach((y, r) =>
     [192, 576, 960, 1344, 1728].forEach((x, i) => {
-      crosses.push({ x, y, at: beat + 0.45 + Math.abs(i - 2) * 0.07 + r * 0.05 });
+      crosses.push({ x, y: Math.min(960, Math.max(120, y)), at: beat + 0.45 + Math.abs(i - 2) * 0.07 + r * 0.05 });
     }),
   );
 
@@ -165,10 +186,11 @@ function buildLayout(rawTitle, fps) {
     rows,
     block,
     beat,
-    widest: Math.max(...rows.map((r) => r.lay.glyphs.length)),
+    p0,
+    widest,
     cx: W / 2,
-    cy: (block.y0 + AXIS_Y + 54) / 2,
-    sub: { font: subFont, x: x0, y: AXIS_Y + 54, cell: subW / SUBTITLE.length },
+    cy,
+    sub: { font: subFont, x: x0, y: subY, cell: subW / SUBTITLE.length },
     slate: { font: slateFont, labels },
     crosses,
   };
@@ -189,18 +211,21 @@ function bump(t, at, width) {
   return Math.abs(x) >= 0.5 ? 0 : Math.cos(Math.PI * x) ** 2;
 }
 
+/** Progress of the push-in, which starts as the secondary beat winds down. */
+const pushIn = (t, L) => eseg(t, L.p0, 4.8, 'inOutSine');
+
 /** Push-in of the lockup: an eased move, then a slow drift that runs out the scene. */
-const push = (t) => 1 + 0.06 * eseg(t, 3.6, 4.8, 'inOutSine') + 0.03 * ease.inQuad(seg(t, 4.4, 6));
+const push = (t, L) => 1 + PUSH * pushIn(t, L) + 0.03 * ease.inQuad(seg(t, 4.4, 6));
 
 /** Extra tracking per glyph slot as the push-in opens the word up. */
-const spread = (t, L) => L.size * 0.03 * eseg(t, 3.6, 4.8, 'inOutSine');
+const spread = (t, L) => L.size * SPREAD * pushIn(t, L);
 
 /**
  * How far the red block has grown past its resting edges (design px, before
  * the push): enough to keep the outer glyphs inside as the tracking opens.
  * The rules and the subtitle follow the same edge.
  */
-const blockGrow = (t, L) => 18 * eseg(t, 3.6, 4.8, 'inOutSine') + (spread(t, L) * (L.widest - 1)) / 2;
+const blockGrow = (t, L) => 18 * pushIn(t, L) + (spread(t, L) * (L.widest - 1)) / 2;
 
 /** Takeover progress: a short inhale (negative shrinks the block), then the flood. */
 const takeover = (t) => kf(t, [[4.66, 0], [4.84, -0.04, 'outSine'], [5.26, 1, 'inOutQuart']]);
@@ -211,7 +236,7 @@ const takeover = (t) => kf(t, [[4.66, 0], [4.84, -0.04, 'outSine'], [5.26, 1, 'i
  * centre) keeps it centred too.
  */
 function blockRect(L, t, q) {
-  const k = push(t);
+  const k = push(t, L);
   const g = blockGrow(t, L);
   const half = ((L.block.x1 - L.block.x0) / 2 + g) * k;
   let x0 = L.cx - half;
@@ -236,16 +261,20 @@ function redRect(L, t) {
   return r;
 }
 
-/** Registration crosses: two thin filled rects each, scaling up while turning from × to +. */
+/**
+ * Registration crosses: two thin filled rects each, scaling up while turning
+ * from × to +, then drifting out from the lockup a little slower than the
+ * push (a touch of parallax).
+ */
 function drawCrosses(ctx, L, t, color, alpha) {
-  const k = 1 + 0.06 * ease.inSine(seg(t, 3.6, 6));
+  const k = 1 + 0.06 * ease.inSine(seg(t, L.p0, 6));
   ctx.fillStyle = rgba(color, alpha);
   for (const c of L.crosses) {
     const a = ease.outBack(seg(t, c.at, c.at + 0.5));
     if (a <= 0) continue;
     const r = 11 * a;
     ctx.save();
-    ctx.translate(W / 2 + (c.x - W / 2) * k, H / 2 + (c.y - H / 2) * k);
+    ctx.translate(L.cx + (c.x - L.cx) * k, L.cy + (c.y - L.cy) * k);
     ctx.rotate((1 - a) * (Math.PI / 4));
     ctx.fillRect(-r, -0.75, r * 2, 1.5);
     ctx.fillRect(-0.75, -r, 1.5, r * 2);
@@ -275,7 +304,7 @@ function drawSlate(ctx, L, s, color, alpha) {
 const collapse = (t) => ease.inQuart(seg(t, 4.98, 5.24));
 
 /** Screen y of a row's rule: on its line through the push, then gliding into the iris origin. */
-const ruleY = (L, row, t) => lerp(L.cy + (row.rule - L.cy) * push(t), IRIS_Y, collapse(t));
+const ruleY = (L, row, t) => lerp(L.cy + (row.rule - L.cy) * push(t, L), IRIS_Y, collapse(t));
 
 /**
  * Baseline rules, in screen space: they draw out from the centre, hold the
@@ -308,7 +337,7 @@ function pose(g, t, hide) {
 /** The glyphs, drawn inside the push transform. */
 function drawGlyphs(ctx, L, t) {
   const sp = spread(t, L);
-  const k = push(t);
+  const k = push(t, L);
   ctx.fillStyle = BONE;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'alphabetic';
@@ -365,6 +394,7 @@ export default defineScene({
   duration: 6.0,
   color: '#FF3B1F',
   slug: false,
+  uses: ['title'], // the layout reads the title, never the seed
   // Flat ink and signal fields with hairlines: the overlay grain moves them by
   // a level or two and would cost more than the whole scene.
   post: { grain: 0 },
@@ -405,7 +435,7 @@ export default defineScene({
     drawRules(ctx, L, t);
 
     // The lockup, pushed in about its own centre.
-    const k = push(t);
+    const k = push(t, L);
     ctx.save();
     ctx.translate(L.cx, L.cy);
     ctx.scale(k, k);

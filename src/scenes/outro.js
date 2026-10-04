@@ -7,12 +7,12 @@
 // where the title's hairline starts when the reel loops.
 //
 // Beats: 0-0.68 paths draw during the fade in · 0.92 outer pair launches ·
-// 1.1 inner pair · 1.6 track · 1.95 title rises · 2.2-4.4 playhead · 4.38
+// 1.04 inner pair · 1.66 track · 1.95 title rises · 2.2-4.4 playhead · 4.38
 // credits and tagline out · 4.6 title sinks · 4.8 diamonds merge · 5.25 gone,
 // solid ink to the end.
 //
 // Everything is drawn with fills: dashes, handles and outlines are thin
-// rotated rects, and dots are cached sprites.
+// rotated rects, and dots are arcs batched into a single fill.
 
 import {
   defineScene,
@@ -22,7 +22,6 @@ import {
   balanceLines,
   layoutGlyphs,
   makeCanvas,
-  dotSprite,
   spring,
   seg,
   eseg,
@@ -49,7 +48,7 @@ const COLORS = [palette.signal, palette.sun, palette.cobalt, palette.bone];
 const TAGLINE = 'a motion reel, drawn live';
 
 // Flight along the path, and the quarter turn that settles with it.
-const FLY = spring({ stiffness: 60, damping: 11 }); // ~4 % overshoot
+const FLY = spring({ stiffness: 130, damping: 18 }); // ~1.8 % overshoot, within 1 px by 0.7 s
 const SPIN = spring({ stiffness: 45, damping: 7.5 });
 const WINDUP = 0.18; // seconds a diamond backs up before it launches
 const DRAW = 0.6; // seconds a motion path takes to draw on
@@ -137,6 +136,7 @@ function buildPath(i, S, P1, P2, T, launch, drawAt) {
     inDir: unit(P2, T),
     hOut: [S[0] + (P1[0] - S[0]) * 0.5, S[1] + (P1[1] - S[1]) * 0.5],
     hIn: [T[0] + (P2[0] - T[0]) * 0.5, T[1] + (P2[1] - T[1]) * 0.5],
+    hOutLen: Math.hypot(P1[0] - S[0], P1[1] - S[1]) * 0.5,
   };
 }
 
@@ -160,11 +160,21 @@ function buildLayout(params, reel) {
   const lead = lines.length > 1 ? Math.max(size * 1.02, ink[0].actualBoundingBoxDescent + asc[1] + size * 0.12) : 0;
   const rows = lines.map((text, k) => {
     const lay = layoutGlyphs(c, text, F, track);
-    return { text, lay, x: W / 2 - lay.width / 2, base: AXIS_Y - 58 - (lines.length - 1 - k) * lead };
+    return { lay, x: W / 2 - lay.width / 2, base: AXIS_Y - 58 - (lines.length - 1 - k) * lead };
   });
   const left = Math.min(...rows.map((r) => r.x));
   const right = Math.max(...rows.map((r) => r.x + r.lay.width));
   const titleTop = rows[0].base - asc[0];
+
+  // The rise runs across the rows, top row first: every upper glyph leads
+  // every lower one, so while the rows share the track's mask the gap between
+  // them can only open. The lag is capped so long titles still land together.
+  const glyphs = [];
+  for (const row of rows) {
+    for (const g of row.lay.glyphs) if (g.ch !== ' ') glyphs.push({ ch: g.ch, x: row.x + g.x, base: row.base });
+  }
+  const lag = Math.min(0.018, 0.4 / Math.max(1, glyphs.length - 1));
+  glyphs.forEach((g, k) => (g.at = 1.95 + k * lag));
 
   // Keyframe track: as wide as the title, never narrower than 720 px.
   const half = Math.max(360, (right - left) / 2 + 6);
@@ -178,8 +188,8 @@ function buildLayout(params, reel) {
   const y = AXIS_Y;
   const paths = [
     buildPath(0, [tx[0] - 250, y + 300], [tx[0] - 80, y + 300], [tx[0], y + 190], [tx[0], y], 0.92, 0),
-    buildPath(1, [tx[1] - 300, y - 420], [tx[1] - 130, y - 420], [tx[1], y - 190], [tx[1], y], 1.1, 0.08),
-    buildPath(2, [tx[2] + 300, y - 420], [tx[2] + 130, y - 420], [tx[2], y - 190], [tx[2], y], 1.1, 0.08),
+    buildPath(1, [tx[1] - 300, y - 420], [tx[1] - 130, y - 420], [tx[1], y - 190], [tx[1], y], 1.04, 0.08),
+    buildPath(2, [tx[2] + 300, y - 420], [tx[2] + 130, y - 420], [tx[2], y - 190], [tx[2], y], 1.04, 0.08),
     buildPath(3, [tx[3] + 250, y + 300], [tx[3] + 80, y + 300], [tx[3], y + 190], [tx[3], y], 0.92, 0),
   ];
 
@@ -198,7 +208,7 @@ function buildLayout(params, reel) {
   return {
     size,
     font: F,
-    rows,
+    glyphs,
     riseTitle: AXIS_Y - titleTop + 12,
     paths,
     tx,
@@ -253,6 +263,31 @@ function segment(ctx, ax, ay, bx, by, lw = 1.5) {
   ctx.restore();
 }
 
+/** Add a disc to the current path, so many dots can share one fill. */
+function disc(ctx, x, y, r) {
+  ctx.moveTo(x + r, y);
+  ctx.arc(x, y, r, 0, TAU);
+}
+
+/**
+ * A keyframe marker: its outline at K and its tangent handle toward Hd,
+ * scaled by k. The first `eaten` fraction of the handle, from the keyframe
+ * out, is erased.
+ */
+function marker(ctx, P, K, Hd, k, eaten, alpha) {
+  if (k <= 0 || alpha <= 0) return;
+  ctx.fillStyle = rgba(P.color, 0.9 * alpha);
+  const hx = K[0] + (Hd[0] - K[0]) * k;
+  const hy = K[1] + (Hd[1] - K[1]) * k;
+  if (eaten < 1) {
+    segment(ctx, lerp(K[0], hx, eaten), lerp(K[1], hy, eaten), hx, hy);
+    ctx.beginPath();
+    disc(ctx, hx, hy, 3.5 * k);
+    ctx.fill();
+  }
+  diamondOutline(ctx, K[0], K[1], 8 * k, 1.5);
+}
+
 /** Where a diamond is along its path at progress u (extrapolated past the ends). */
 function along(P, u, out) {
   if (u < 0) {
@@ -286,25 +321,20 @@ function drawPath(ctx, P, t) {
     ctx.restore();
   }
 
-  const dot = dotSprite(P.color, 16);
-  for (const tk of P.ticks) {
-    if (tk.u <= gone || tk.u > drawn) continue;
-    ctx.drawImage(dot, tk.p[0] - 2.5, tk.p[1] - 2.5, 5, 5);
-  }
+  ctx.fillStyle = P.color;
+  ctx.beginPath();
+  for (const tk of P.ticks) if (tk.u > gone && tk.u <= drawn) disc(ctx, tk.p[0], tk.p[1], 2.5);
+  ctx.fill();
 
-  // Keyframe markers with their tangent handles: the start set leaves with
-  // the diamond, the end set arrives as the path completes.
-  const startK = ease.outBack(seg(t, P.drawAt, P.drawAt + 0.35)) * (1 - eseg(t, P.launch + 0.05, P.launch + 0.3, 'inCubic'));
+  // Keyframe markers with their tangent handles, popping in as the path
+  // draws. The start set leaves with the path: its handle is erased from the
+  // keyframe out at the path's pace, and its outline fades once the diamond
+  // has gone. The end set retracts into its keyframe as the diamond arrives.
+  const pop = ease.outBack(seg(t, P.drawAt, P.drawAt + 0.35));
+  const eaten = clamp01((gone * P.len) / P.hOutLen);
+  marker(ctx, P, P.S, P.hOut, pop, eaten, 1 - ease.outQuad(seg(t, P.launch, P.launch + 0.2)));
   const endK = ease.outBack(seg(drawn, 0.85, 1)) * (1 - eseg(gone, 0.8, 0.98, 'inCubic'));
-  for (const [k, K, Hd] of [[startK, P.S, P.hOut], [endK, P.T, P.hIn]]) {
-    if (k <= 0) continue;
-    ctx.fillStyle = rgba(P.color, 0.9);
-    const hx = K[0] + (Hd[0] - K[0]) * k;
-    const hy = K[1] + (Hd[1] - K[1]) * k;
-    segment(ctx, K[0], K[1], hx, hy);
-    ctx.drawImage(dot, hx - 3.5 * k, hy - 3.5 * k, 7 * k, 7 * k);
-    diamondOutline(ctx, K[0], K[1], 8 * k, 1.5);
-  }
+  marker(ctx, P, P.T, P.hIn, endK, 0, 1);
 }
 
 /** Title rises out of the track, masked so it only exists above it; it sinks back with a small lift first. */
@@ -319,13 +349,10 @@ function drawTitle(ctx, L, t) {
   ctx.fillStyle = BONE;
   ctx.textAlign = 'left';
   ctx.textBaseline = 'alphabetic';
-  for (const row of L.rows) {
-    for (const g of row.lay.glyphs) {
-      if (g.ch === ' ') continue;
-      // A slight per-glyph lag keeps the rise from reading as a slab.
-      const up = ease.outExpo(seg(t, 1.95 + g.i * 0.018, 2.75 + g.i * 0.018));
-      ctx.fillText(g.ch, row.x + g.x, row.base + (1 - up + out) * L.riseTitle);
-    }
+  for (const g of L.glyphs) {
+    // A slight per-glyph lag keeps the rise from reading as a slab.
+    const up = ease.outExpo(seg(t, g.at, g.at + 0.8));
+    ctx.fillText(g.ch, g.x, g.base + (1 - up + out) * L.riseTitle);
   }
   ctx.restore();
 }
@@ -378,6 +405,7 @@ export default defineScene({
   color: '#EFEBE3',
   transition: { type: 'fade', duration: 0.8 },
   slug: false,
+  uses: ['title'], // the layout reads the title and the reel timeline, never the seed
   // Hairlines on near-black: the overlay grain is all but invisible here and
   // would cost more than the whole scene.
   post: { grain: 0 },
@@ -402,8 +430,8 @@ export default defineScene({
     const merge = ease.inOutQuart(seg(t, 4.8, 5.05));
     const cx = W / 2;
 
-    // Keyframe track, drawn out from the centre once the diamonds have landed.
-    const open = ease.outExpo(seg(t, 1.6, 2.0));
+    // Keyframe track, drawn out from the centre once the diamonds have settled.
+    const open = ease.outExpo(seg(t, 1.66, 2.06));
     if (open > 0 && merge < 1) {
       const left = lerp(lerp(cx, L.track.x0, open), cx, merge);
       const right = lerp(lerp(cx, L.track.x1, open), cx, merge);
@@ -446,11 +474,12 @@ export default defineScene({
       }
       ctx.fillStyle = P.color;
       diamond(ctx, x, pos[1], r, rot);
-      // A ring on landing: the keyframe is set.
+      // A ring on landing, centred on the keyframe: it is set, and the
+      // diamond settles into it.
       const ring = seg(t, P.arrive, P.arrive + 0.5);
       if (ring > 0 && ring < 1) {
         ctx.fillStyle = rgba(P.color, 0.6 * (1 - ring) ** 2);
-        diamondOutline(ctx, x, pos[1], R * (1.2 + 1.6 * ease.outCubic(ring)), 1.5);
+        diamondOutline(ctx, P.T[0], P.T[1], R * (1.2 + 1.6 * ease.outCubic(ring)), 1.5);
       }
     });
   },
