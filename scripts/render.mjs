@@ -9,6 +9,7 @@
 //   npm run render -- --params '{"title":"HELLO"}' --seed 7
 //   npm run render -- --gif media/preview.gif        also write a GIF (from the MP4)
 //   npm run render -- --frames-dir out/frames        write a PNG sequence instead (no ffmpeg needed)
+//   npm run render -- --no-audio                     leave out the procedural soundtrack
 //
 // Needs ffmpeg on PATH, or FFMPEG_PATH pointing at a binary.
 
@@ -38,6 +39,7 @@ const gif = arg('gif') ? path.resolve(ROOT, arg('gif') === true ? 'media/preview
 const workers = Math.max(1, Math.min(Number(arg('workers', Math.min(4, os.cpus().length))), 8));
 const params = arg('params') ? JSON.parse(arg('params')) : null;
 const seed = arg('seed') !== undefined ? Number(arg('seed')) : null;
+const withAudio = !arg('no-audio');
 
 function findFfmpeg() {
   const candidates = [process.env.FFMPEG_PATH, 'ffmpeg'].filter(Boolean);
@@ -83,13 +85,25 @@ async function main() {
 
   let encoder = null;
   let encoderDone = null;
+  let wavPath = null;
   if (framesDir) fs.mkdirSync(framesDir, { recursive: true });
   else {
     fs.mkdirSync(path.dirname(out), { recursive: true });
+    if (withAudio) {
+      // The soundtrack is rendered offline from the same score the player uses.
+      const audio = await pages[0].page.evaluate((o) => window.__audio(o), { from, to, sampleRate: 48000 });
+      wavPath = path.join(os.tmpdir(), `claude-motion-reel-${process.pid}.wav`);
+      fs.writeFileSync(wavPath, Buffer.from(audio.wav, 'base64'));
+      console.log(`Soundtrack: ${audio.events} events, peak ${audio.peakDb} dBFS`);
+    }
+    const audioIn = wavPath ? ['-i', wavPath] : [];
+    const audioOut = wavPath ? ['-map', '0:v', '-map', '1:a', '-c:a', 'aac', '-b:a', '192k', '-shortest'] : [];
     encoder = spawn(ffmpeg, [
       '-y', '-loglevel', 'error',
       '-f', 'image2pipe', '-c:v', 'mjpeg', '-framerate', String(fps), '-i', '-',
+      ...audioIn,
       '-c:v', 'libx264', '-preset', 'slow', '-crf', crf, '-pix_fmt', 'yuv420p',
+      ...audioOut,
       '-movflags', '+faststart', out,
     ], { stdio: ['pipe', 'inherit', 'inherit'] });
     encoderDone = new Promise((resolve, reject) => {
@@ -138,6 +152,7 @@ async function main() {
   if (encoder) {
     encoder.stdin.end();
     await encoderDone;
+    if (wavPath) fs.rmSync(wavPath, { force: true });
     console.log(`Wrote ${path.relative(ROOT, out)} (${(fs.statSync(out).size / 1e6).toFixed(1)} MB)`);
     if (gif) {
       const gifWidth = Number(arg('gif-width', 640));

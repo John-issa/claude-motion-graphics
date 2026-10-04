@@ -13,3 +13,5 @@ export * from './shapes.js';
 export * from './post.js';
 export * from './gl.js';
 export * from './reel.js';
+export * from './score.js';
+export * from './audio.js';

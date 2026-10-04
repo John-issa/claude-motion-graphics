@@ -189,3 +189,135 @@ window.__audit = ({ scene, samples = 16, width = 640 } = {}) => {
     brightness: first.map((f) => Math.round(f.mean)),
   };
 };
+
+// ---------------------------------------------------------------------------
+// Sound: render the procedural score offline and measure it.
+// ---------------------------------------------------------------------------
+
+import { renderScoreOffline, encodeWav } from '../src/engine/index.js';
+
+function toBase64(bytes) {
+  let bin = '';
+  const u8 = new Uint8Array(bytes);
+  for (let i = 0; i < u8.length; i += 0x8000) bin += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+
+/** Render [from, to) of the score; returns WAV (base64) plus level statistics. */
+window.__audio = async ({ from = 0, to, sampleRate = 48000, wav = true } = {}) => {
+  const score = reel.score();
+  const end = to ?? score.duration;
+  const buf = await renderScoreOffline(score, { from, to: end, sampleRate });
+  const L = buf.getChannelData(0);
+  const R = buf.getChannelData(1);
+  let peak = 0;
+  let clipped = 0;
+  const win = Math.round(sampleRate * 0.5);
+  const rms = [];
+  for (let i = 0; i < L.length; i += win) {
+    let acc = 0;
+    const n = Math.min(win, L.length - i);
+    for (let k = i; k < i + n; k++) {
+      const a = Math.abs(L[k]);
+      const b = Math.abs(R[k]);
+      peak = Math.max(peak, a, b);
+      if (a >= 0.999 || b >= 0.999) clipped++;
+      acc += (L[k] * L[k] + R[k] * R[k]) / 2;
+    }
+    rms.push(Math.round(20 * Math.log10(Math.sqrt(acc / n) + 1e-9) * 10) / 10);
+  }
+  return {
+    seconds: buf.length / sampleRate,
+    events: score.events.length,
+    peakDb: Math.round(20 * Math.log10(peak + 1e-9) * 10) / 10,
+    clippedSamples: clipped,
+    rmsDbPerHalfSecond: rms,
+    wav: wav ? toBase64(encodeWav(buf)) : null,
+  };
+};
+
+function fft(re, im) {
+  const n = re.length;
+  for (let i = 1, j = 0; i < n; i++) {
+    let bit = n >> 1;
+    for (; j & bit; bit >>= 1) j ^= bit;
+    j ^= bit;
+    if (i < j) {
+      [re[i], re[j]] = [re[j], re[i]];
+      [im[i], im[j]] = [im[j], im[i]];
+    }
+  }
+  for (let len = 2; len <= n; len <<= 1) {
+    const ang = (-2 * Math.PI) / len;
+    for (let i = 0; i < n; i += len) {
+      for (let k = 0; k < len / 2; k++) {
+        const wr = Math.cos(ang * k);
+        const wi = Math.sin(ang * k);
+        const ur = re[i + k];
+        const ui = im[i + k];
+        const vr = re[i + k + len / 2] * wr - im[i + k + len / 2] * wi;
+        const vi = re[i + k + len / 2] * wi + im[i + k + len / 2] * wr;
+        re[i + k] = ur + vr;
+        im[i + k] = ui + vi;
+        re[i + k + len / 2] = ur - vr;
+        im[i + k + len / 2] = ui - vi;
+      }
+    }
+  }
+}
+
+/** Log-frequency spectrogram of the score with scene boundaries marked, as a PNG. */
+window.__spectrogram = async ({ from = 0, to, width = 1400, height = 360, sampleRate = 32000 } = {}) => {
+  const score = reel.score();
+  const end = to ?? score.duration;
+  const buf = await renderScoreOffline(score, { from, to: end, sampleRate });
+  const L = buf.getChannelData(0);
+  const N = 2048;
+  const c = document.createElement('canvas');
+  c.width = width;
+  c.height = height + 40;
+  const g = c.getContext('2d');
+  g.fillStyle = '#000';
+  g.fillRect(0, 0, c.width, c.height);
+  const img = g.createImageData(width, height);
+  const fMin = 30;
+  const fMax = 14000;
+  const re = new Float64Array(N);
+  const im = new Float64Array(N);
+  for (let x = 0; x < width; x++) {
+    const center = Math.floor((x / width) * L.length);
+    for (let k = 0; k < N; k++) {
+      const idx = center - N / 2 + k;
+      const w = 0.5 - 0.5 * Math.cos((2 * Math.PI * k) / (N - 1));
+      re[k] = (idx >= 0 && idx < L.length ? L[idx] : 0) * w;
+      im[k] = 0;
+    }
+    fft(re, im);
+    for (let y = 0; y < height; y++) {
+      const f = fMin * Math.pow(fMax / fMin, 1 - y / (height - 1));
+      const bin = Math.min(N / 2 - 1, Math.round((f * N) / sampleRate));
+      const mag = Math.hypot(re[bin], im[bin]) / (N / 4);
+      const db = 20 * Math.log10(mag + 1e-9);
+      const v = Math.max(0, Math.min(1, (db + 90) / 80));
+      const o = (y * width + x) * 4;
+      img.data[o] = 255 * Math.min(1, v * 1.6);
+      img.data[o + 1] = 255 * Math.max(0, v * 1.6 - 0.6);
+      img.data[o + 2] = 255 * Math.max(0, Math.min(1, v < 0.4 ? v * 2 : 1.6 - v * 1.5));
+      img.data[o + 3] = 255;
+    }
+  }
+  g.putImageData(img, 0, 0);
+  g.font = '12px monospace';
+  for (const s of reel.meta.scenes) {
+    const x = ((s.start - from) / (end - from)) * width;
+    if (x < 0 || x > width) continue;
+    g.fillStyle = 'rgba(255,255,255,0.6)';
+    g.fillRect(x, 0, 1, height);
+    g.fillStyle = '#ddd';
+    g.fillText(s.id, x + 3, height + 16);
+  }
+  g.fillStyle = '#999';
+  g.fillText(`${fMax / 1000} kHz`, 2, 12);
+  g.fillText(`${fMin} Hz`, 2, height - 4);
+  return c.toDataURL('image/png');
+};

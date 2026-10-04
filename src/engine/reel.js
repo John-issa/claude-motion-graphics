@@ -9,6 +9,7 @@ import { createGL } from './gl.js';
 import { grain, vignette } from './post.js';
 import { makeCanvas } from './draw.js';
 import { loadFonts, font, layoutGlyphs } from './text.js';
+import { buildScore } from './score.js';
 
 /** Design resolution. Scenes always draw in this 1920×1080 space. */
 export const W = 1920;
@@ -36,6 +37,7 @@ export function validateScene(scene) {
   if (!(typeof scene.duration === 'number' && scene.duration > 0 && scene.duration <= 30)) problems.push('duration must be 0-30 s');
   if (typeof scene.render !== 'function') problems.push('render(ctx, s) is required');
   if (scene.setup !== undefined && typeof scene.setup !== 'function') problems.push('setup must be a function');
+  if (scene.cues !== undefined && typeof scene.cues !== 'function') problems.push('cues must be a function');
   if (scene.color !== undefined && !/^#[0-9a-f]{6}$/i.test(scene.color)) problems.push('color must be #rrggbb');
   if (scene.notes !== undefined && !(Array.isArray(scene.notes) && scene.notes.every((n) => typeof n === 'string'))) problems.push('notes must be strings');
   if (scene.transition !== undefined) {
@@ -184,7 +186,28 @@ export function createReel({ scenes, params = {}, seed = 1, fps = 60 } = {}) {
       console.error(`[${e.scene.id}] setup failed`, err);
     }
   }
-  const setupAll = () => entries.forEach(runSetup);
+  let score = null;
+  const setupAll = () => {
+    entries.forEach(runSetup);
+    score = null;
+  };
+
+  /** Each scene's optional sound cues, mapped to global reel time. */
+  function collectCues() {
+    const out = [];
+    for (const e of entries) {
+      if (typeof e.scene.cues !== 'function') continue;
+      try {
+        const list = e.scene.cues({ params: currentParams, seed: currentSeed, state: e.state, dur: e.scene.duration }) || [];
+        for (const c of list) {
+          if (c && c.t >= 0 && c.t <= e.scene.duration) out.push({ ...c, t: e.start + c.t, scene: e.scene.id });
+        }
+      } catch (err) {
+        console.error(`[${e.scene.id}] cues failed`, err);
+      }
+    }
+    return out.sort((a, b) => a.t - b.t);
+  }
 
   const buffers = new Map();
   function buffer(name, w, h) {
@@ -452,6 +475,11 @@ export function createReel({ scenes, params = {}, seed = 1, fps = 60 } = {}) {
     },
     setGrain(on) {
       grainOn = !!on;
+    },
+    /** The procedural soundtrack for the current params and seed (cached). */
+    score() {
+      if (!score) score = buildScore(meta, { seed: currentSeed, cues: collectCues() });
+      return score;
     },
     /** The scene that owns time t (the incoming one during a transition). */
     sceneAt(t) {
