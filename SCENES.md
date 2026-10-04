@@ -16,6 +16,7 @@ export default defineScene({
   transition: { type: 'wipe', duration: 0.7, color: '#FFD23F' }, // how this scene ENTERS
   post: { grain: 0.05, vignette: 0.25 },  // optional finishing (grain default 0.05)
   slug: { color: '#EFEBE3' },             // chapter slug colour, or false to hide it
+  poster: 3.2,                            // a representative moment for stills and previews
   uses: ['title'],           // inputs setup() reads; omit to re-run setup on any change
   setup({ params, seed, W, H, gl, reel }) {
     return { /* precomputed, deterministic data */ };

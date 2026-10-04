@@ -38,6 +38,7 @@ export function validateScene(scene) {
   if (typeof scene.render !== 'function') problems.push('render(ctx, s) is required');
   if (scene.setup !== undefined && typeof scene.setup !== 'function') problems.push('setup must be a function');
   if (scene.cues !== undefined && typeof scene.cues !== 'function') problems.push('cues must be a function');
+  if (scene.poster !== undefined && !(typeof scene.poster === 'number' && scene.poster >= 0 && scene.poster <= (scene.duration ?? 0))) problems.push('poster must be a time within the scene');
   if (scene.uses !== undefined && !(Array.isArray(scene.uses) && scene.uses.every((u) => typeof u === 'string'))) problems.push("uses must list input names, e.g. ['title', 'seed']");
   if (scene.color !== undefined && !/^#[0-9a-f]{6}$/i.test(scene.color)) problems.push('color must be #rrggbb');
   if (scene.notes !== undefined && !(Array.isArray(scene.notes) && scene.notes.every((n) => typeof n === 'string'))) problems.push('notes must be strings');
@@ -172,6 +173,8 @@ export function createReel({ scenes, params = {}, seed = 1, fps = 60 } = {}) {
       // The full incoming transition, so a scene can sync to its neighbour's
       // reveal (e.g. size an iris to it): { type, duration, ease, color, ... }.
       transitionIn: { ...e.transition },
+      // A representative moment (local seconds) for stills, thumbnails and previews.
+      poster: e.scene.poster ?? e.scene.duration / 2,
       usesWebGL: !!e.scene.usesWebGL,
     })),
   };
