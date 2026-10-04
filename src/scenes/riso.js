@@ -124,6 +124,14 @@ export default defineScene({
   slug: { color: '#0B0C10' },
   uses: ['seed'], // setup reads the seed (the blob's outline), never the title
 
+  uses: ['seed'],
+  /** Sound on the print's beat: every morph lands like a press stroke. */
+  cues: () => [
+    { t: INTRO, kind: 'land', strength: 0.5 }, // the dot pops
+    { t: WORD_IN - 0.2, kind: 'whoosh', dur: 0.25, strength: 0.35 }, // OVERPRINT enters
+    ...BEATS.map((b) => ({ t: b + MORPH, kind: 'hit', strength: 0.5 })),
+    { t: FLOOD, kind: 'swell', dur: 0.8, strength: 0.7 }, // the blue flood
+  ],
   setup({ seed }) {
     return {
       outlines: buildOutlines(seed),

@@ -415,6 +415,17 @@ export default defineScene({
     'Credits computed from the reel timeline',
     'Seamless loop into the title',
   ],
+  uses: ['title'],
+  /** Sound: the keyframes snapping onto the track, then the final merge. */
+  cues({ state: L }) {
+    if (!L) return [];
+    return [
+      { t: 0.86, kind: 'whoosh', dur: 0.3, strength: 0.3 }, // the outer pair launches
+      ...L.paths.map((p) => ({ t: p.arrive, kind: 'land', strength: 0.7 })),
+      // Last cue is short so nothing rings past the loop seam.
+      { t: 4.8, kind: 'land', strength: 0.45 }, // the diamonds merge
+    ];
+  },
   setup({ params, reel }) {
     return buildLayout(params, reel);
   },

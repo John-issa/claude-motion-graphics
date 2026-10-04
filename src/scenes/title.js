@@ -405,6 +405,21 @@ export default defineScene({
     'Mask reveals',
     'SMPTE timecode from the frame counter',
   ],
+  uses: ['title'],
+  /** Sound: glyphs landing (at most eight, spread across the word), the red block, the drop. */
+  cues({ state: L }) {
+    if (!L) return [];
+    const glyphs = L.rows.flatMap((r) => r.glyphs);
+    const n = glyphs.length;
+    const picks = n <= 8 ? glyphs : Array.from({ length: 8 }, (_, i) => glyphs[Math.round((i * (n - 1)) / 7)]);
+    return [
+      // The rise spring first reaches the baseline about 0.2 s after a glyph starts.
+      ...picks.map((g, i) => ({ t: g.t0 + 0.2, kind: 'land', strength: 0.5 + 0.05 * i })),
+      { t: L.beat + 0.04, kind: 'hit', strength: 0.75 }, // the red block slams in
+      { t: 4.6, kind: 'whoosh', dur: 0.3, dir: 'down', strength: 0.45 }, // glyphs drop out
+      { t: 4.84, kind: 'swell', dur: 0.42, strength: 0.7 }, // red floods the frame
+    ];
+  },
   setup({ params, reel }) {
     return buildLayout(params.title, reel.fps);
   },
