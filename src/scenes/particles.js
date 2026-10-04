@@ -73,7 +73,7 @@ const FOCAL = 1500;
 const TWIST = 2.2; // extra spin a particle picks up while it falls into the vortex
 const GATHER_SWIRL = 0.7; // radians the gather paths orbit the form's axis
 const FORM_GAIN = 0.62; // brightness of the 3D forms at the centre plane
-const LIFT = 52; // design px the camera rises so the tilted torus sits centred
+const RISE = 52; // design px the camera rises so the tilted torus sits centred
 
 // Look.
 const INDIGO = '#3A2E9C';
@@ -514,8 +514,9 @@ function setup({ params, seed }) {
   const T = titleCloud(params.title, seed >>> 0);
   st.light = lightMap(T);
   st.sweep = sweepPath(T);
-  // Brightness follows the ink area each particle covers: a short title packs
-  // them densely, so each glows less rather than clipping; a big one spreads them.
+  // Brightness follows the ink area each particle covers (the look was tuned at
+  // 30.7 px² each): a short title packs them densely, so each glows less rather
+  // than clipping; a big one spreads them, so each glows more.
   st.dens = Math.min(1.25, Math.max(0.45, Math.pow(st.light.ink / N_TEXT / 30.7, 0.6)));
   seedSwirl(st, rnd);
   seedTitle(st, T, rnd, noise);
@@ -547,7 +548,7 @@ function frameGlobals(t, G) {
   G.rs = SPHERE_R * (0.86 + 0.14 * lock(t - 3.7));
   // Tilted, the torus's near side swells toward the camera; the camera rises
   // to keep it centred, then settles back onto the singularity as it collapses.
-  G.cy = CY - LIFT * ease.inOutSine(seg(t, 4.75, 5.4)) * (1 - ease.inOutSine(seg(t, 5.6, 6.12)));
+  G.cy = CY - RISE * ease.inOutSine(seg(t, 4.75, 5.4)) * (1 - ease.inOutSine(seg(t, 5.6, 6.12)));
   return G;
 }
 
@@ -1148,7 +1149,7 @@ function lightWord(st, R, t) {
 }
 
 /** The title particles: a core for each, halos and haze for some, streaks for the fast ones. */
-function drawParticles(st, R, t) {
+function drawParticles(st, R, t, dt) {
   const k = R.px;
   const coreE = R.core.energy;
   const haloE = R.halo.energy * 0.26;
@@ -1180,8 +1181,8 @@ function drawParticles(st, R, t) {
     // White-hot cores on the fastest particles, judged against each phase's own speeds.
     let heat = 0;
     if (move > 0) {
-      const v = move / DT;
-      if (flying) heat = 0.8 * smoothstep(420, 1100, v); // streaming into the word
+      const v = move / dt;
+      if (flying) heat = 0.7 * smoothstep(520, 1400, v); // streaming into the word
       else if (t < st.g0[i]) heat = smoothstep(900, 2200, v); // the burst's release
       else heat = 0.7 * smoothstep(1800, 6000, v); // gather, vortex and warp
     }
@@ -1234,7 +1235,7 @@ function drawParticles(st, R, t) {
 }
 
 /** Dust: dim motes drifting in the central light; at the end they streak outward like stars at warp. */
-function drawDust(st, R, t) {
+function drawDust(st, R, t, dt) {
   const k = R.px;
   const coreE = R.core.energy;
   const lineK = Math.min(1, k * 1.5);
@@ -1249,7 +1250,7 @@ function drawDust(st, R, t) {
     let y0 = y;
     if (tw > 0) {
       const f = (0.8 + 2.2 * z) * 2.4; // nearer motes rush past faster
-      const tp = Math.max(0, tw - DT);
+      const tp = Math.max(0, tw - dt);
       x0 = CX + (x - CX) * (1 + f * tp * tp);
       y0 = CY + (y - CY) * (1 + f * tp * tp);
       x = CX + (x - CX) * (1 + f * tw * tw);
@@ -1283,18 +1284,18 @@ function drawFlash(R, t) {
   if (line > 0) anamorphic(R, line);
 }
 
-/** Everything lit at time t, into the raster's buffer; box ends up bounding it. */
-function drawFrame(st, R, t) {
+/** Everything lit at time t, into the raster's buffer; box ends up bounding it. dt is the streak shutter. */
+function drawFrame(st, R, t, dt = DT) {
   frameGlobals(t, G1);
-  frameGlobals(t - DT, G0);
+  frameGlobals(t - dt, G0);
   clearBuffer(R);
   box.x0 = CX - LIFT_RX;
   box.x1 = CX + LIFT_RX;
   box.y0 = CY - LIFT_RY;
   box.y1 = CY + LIFT_RY;
   lightWord(st, R, t);
-  drawParticles(st, R, t);
-  drawDust(st, R, t);
+  drawParticles(st, R, t, dt);
+  drawDust(st, R, t, dt);
   drawFlash(R, t);
 }
 
@@ -1332,14 +1333,34 @@ export default defineScene({
     '3D sphere and torus in perspective',
     'Additive light, splatted in one pass',
   ],
+  poster: 2.8, // the word held, the glint crossing it
+  uses: ['title', 'seed'],
   setup,
+  cues() {
+    return [
+      { t: 0.95, kind: 'whoosh', dur: 1.1, dir: 'up', strength: 0.3 }, // the galaxy unravels into streams
+      // The word lands left to right: a pluck as each third of it settles.
+      { t: 1.81, kind: 'land', strength: 0.45 },
+      { t: 1.98, kind: 'land', strength: 0.5 },
+      { t: 2.15, kind: 'land', strength: 0.6 },
+      { t: 2.52, kind: 'shimmer', strength: 0.6 }, // the glint reaches the ink
+      { t: 3.2, kind: 'swell', dur: 0.24, strength: 0.6 }, // the inhale...
+      { t: BURST, kind: 'hit', strength: 0.8 }, // ...and the burst
+      { t: 4.05, kind: 'land', strength: 0.55 }, // the sphere locks on its spring
+      { t: 4.75, kind: 'whoosh', dur: 0.6, dir: 'up', strength: 0.25 }, // the poles open into the torus
+      { t: 5.55, kind: 'swell', dur: 0.56, strength: 0.7 }, // the vortex winds up...
+      { t: FLASH, kind: 'hit', strength: 0.9 }, // ...into the singularity
+    ];
+  },
   render(ctx, s) {
     const R = raster(s.px);
     // Flat night everywhere (a cheap clear); the buffer is uploaded only where
     // there is light: the lift, plus the bounds of everything splatted.
     ctx.fillStyle = palette.night;
     ctx.fillRect(0, 0, s.W, s.H);
-    drawFrame(s.state, R, s.t);
+    // Under the reel's motion blur the sub-frames already smear across half a
+    // frame (its default shutter), so the streaks drawn here shorten by that much.
+    drawFrame(s.state, R, s.t, s.motionBlur > 1 ? DT - 0.5 / s.fps : DT);
     present(ctx, R);
   },
 });
