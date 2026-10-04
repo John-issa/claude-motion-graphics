@@ -468,7 +468,9 @@ export function createLiveAudio(getScore) {
      * is subtracted so a picture following this clock matches the sound.
      */
     position() {
-      if (!anchor || !ac) return null;
+      // An interrupted or suspended context (a phone call, a device change)
+      // stops its clock; report no position so the picture doesn't freeze.
+      if (!anchor || !ac || ac.state !== 'running') return null;
       const latency = (ac.outputLatency || 0) + (ac.baseLatency || 0);
       return anchor.scoreT + Math.max(0, ac.currentTime - anchor.ctxT - latency);
     },

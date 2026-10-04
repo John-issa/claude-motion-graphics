@@ -33,7 +33,9 @@ export function startRecording(canvas, { mime, fps = 60, bitrate = 12e6, audio =
   let type = mime;
   if (audio) {
     audio.getAudioTracks().forEach((track) => stream.addTrack(track));
-    const withAudio = mime.startsWith('video/webm') ? `${mime.split(';')[0]};codecs=${mime.includes('vp8') ? 'vp8' : 'vp9'},opus` : mime;
+    const withAudio = mime.startsWith('video/webm')
+      ? `${mime.split(';')[0]};codecs=${mime.includes('vp8') ? 'vp8' : 'vp9'},opus`
+      : `${mime.split(';')[0]};codecs=avc1,mp4a.40.2`;
     if (MediaRecorder.isTypeSupported(withAudio)) type = withAudio;
     else if (MediaRecorder.isTypeSupported(mime.split(';')[0])) type = mime.split(';')[0];
   }

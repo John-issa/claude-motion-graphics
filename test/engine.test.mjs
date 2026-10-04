@@ -198,3 +198,11 @@ test('setup re-runs only for scenes that use the changed input', () => {
   reel.setParams({ title: 'X' }); // unchanged: nothing re-runs
   assert.deepEqual(calls, { a: 1, b: 0, c: 2 });
 });
+
+test('a null or non-object transition gets a readable validation error', () => {
+  for (const transition of [null, 'fade']) {
+    const problems = validateScene({ id: 'x', title: 'X', duration: 2, render() {}, transition });
+    assert.equal(problems.length, 1);
+    assert.match(problems[0], /transition must be an object/);
+  }
+});

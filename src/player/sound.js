@@ -11,6 +11,10 @@ export function createSound(reel) {
   const live = createLiveAudio(() => reel.score());
   let enabled = false;
   let running = false;
+  // Stall guard: if the audio clock stops moving while wall time passes, it
+  // stops leading and is restarted on the next follow().
+  let lastPos = -1;
+  let lastMoved = 0;
 
   return {
     get available() {
@@ -51,7 +55,18 @@ export function createSound(reel) {
      * which the picture follows. Null when sound isn't driving playback.
      */
     clock() {
-      return running ? live.position() : null;
+      if (!running) return null;
+      const pos = live.position();
+      const now = performance.now();
+      if (pos === null) return null;
+      if (pos !== lastPos) {
+        lastPos = pos;
+        lastMoved = now;
+      } else if (now - lastMoved > 250) {
+        running = false; // follow() restarts it from the picture's time
+        return null;
+      }
+      return pos;
     },
     /** The mix as a MediaStream for recording, or null when sound is off. */
     captureStream() {

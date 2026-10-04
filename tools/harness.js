@@ -96,7 +96,7 @@ window.__bench = ({ scene, width = 1280, frames = 60, from = 0, to } = {}) => {
 function frameHash(canvas) {
   const d = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
   let h = 0x811c9dc5;
-  for (let i = 0; i < d.length; i += 3) {
+  for (let i = 0; i < d.length; i++) {
     h ^= d[i];
     h = Math.imul(h, 0x01000193);
   }

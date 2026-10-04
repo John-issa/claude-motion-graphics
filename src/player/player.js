@@ -11,6 +11,8 @@ import { createSound } from './sound.js';
 
 const DEFAULT_TITLE = DEFAULT_PARAMS.title;
 const TITLE_MAX = 24;
+/** Collapse whitespace and cap the length: the one rule for typed and stored titles. */
+export const cleanTitle = (v) => String(v).replace(/\s+/g, ' ').trim().slice(0, TITLE_MAX);
 // A title change re-runs every scene's setup (about 0.1 s), which stalls
 // playback. While the reel plays, wait for a longer pause in typing before
 // applying it; Enter or leaving the field applies it at once.
@@ -431,6 +433,7 @@ export function createPlayer({ reel, target = 'dev', prefs = {} }) {
   }
 
   async function toggleSound() {
+    if (rec) return; // a take keeps the sound it started with
     await sound.setEnabled(!sound.enabled);
     reflect();
   }
@@ -750,7 +753,6 @@ export function createPlayer({ reel, target = 'dev', prefs = {} }) {
   // ---------- Make it yours ----------
 
   let titleTimer = 0;
-  const cleanTitle = (v) => v.replace(/\s+/g, ' ').trim().slice(0, TITLE_MAX);
 
   function applyTitle() {
     clearTimeout(titleTimer);
@@ -866,6 +868,7 @@ export function createPlayer({ reel, target = 'dev', prefs = {} }) {
     el.fwd,
     el.next,
     el.loop,
+    el.sound,
     el.blur,
     el.titleInput,
     el.titleReset,

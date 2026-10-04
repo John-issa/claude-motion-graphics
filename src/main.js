@@ -5,10 +5,8 @@
 
 import scenes from './scenes/index.js';
 import { createReel } from './engine/index.js';
-import { createPlayer } from './player/player.js';
+import { createPlayer, cleanTitle } from './player/player.js';
 import { loadPrefs } from './player/storage.js';
-
-const TITLE_MAX = 24;
 
 function buildTarget() {
   const build = typeof window !== 'undefined' ? window.__BUILD__ : undefined;
@@ -22,7 +20,7 @@ async function main() {
 
   // Restore the viewer's title and seed before setup runs, so scenes only set up once.
   const prefs = loadPrefs();
-  const title = typeof prefs.title === 'string' ? prefs.title.replace(/\s+/g, ' ').trim().slice(0, TITLE_MAX) : '';
+  const title = typeof prefs.title === 'string' ? cleanTitle(prefs.title) : '';
   const seed = Number.isInteger(prefs.seed) && prefs.seed > 0 ? prefs.seed >>> 0 : undefined;
 
   const reel = createReel({ scenes, fps: 60, params: title ? { title } : {}, seed });

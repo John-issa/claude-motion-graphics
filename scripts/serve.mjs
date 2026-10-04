@@ -28,8 +28,18 @@ const TYPES = {
 export function startServer({ port = 5173, root = ROOT, host = '127.0.0.1' } = {}) {
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://localhost');
-    let file = path.normalize(path.join(root, decodeURIComponent(url.pathname)));
-    if (!file.startsWith(root)) {
+    let pathname;
+    try {
+      pathname = decodeURIComponent(url.pathname);
+    } catch {
+      res.writeHead(400).end('Bad request');
+      return;
+    }
+    let file = path.normalize(path.join(root, pathname));
+    // Serve only files inside root: a plain prefix test would also admit
+    // siblings such as "<root>-secret".
+    const rel = path.relative(root, file);
+    if (rel.startsWith('..') || path.isAbsolute(rel)) {
       res.writeHead(403).end('Forbidden');
       return;
     }
@@ -55,7 +65,7 @@ export function startServer({ port = 5173, root = ROOT, host = '127.0.0.1' } = {
   });
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const i = process.argv.indexOf('--port');
   const port = Number(i > 0 ? process.argv[i + 1] : process.env.PORT || 5173);
   startServer({ port }).then(({ url }) => {

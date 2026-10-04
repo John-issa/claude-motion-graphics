@@ -44,8 +44,11 @@ export function validateScene(scene) {
   if (scene.notes !== undefined && !(Array.isArray(scene.notes) && scene.notes.every((n) => typeof n === 'string'))) problems.push('notes must be strings');
   if (scene.transition !== undefined) {
     const tr = scene.transition;
-    if (!TRANSITIONS.includes(tr.type)) problems.push(`transition.type must be one of ${TRANSITIONS.join(', ')}`);
-    if (tr.duration !== undefined && !(tr.duration >= 0 && tr.duration <= (scene.duration ?? 0) / 2)) problems.push('transition.duration must be 0 to half the scene');
+    if (!tr || typeof tr !== 'object') problems.push('transition must be an object like { type, duration }');
+    else {
+      if (!TRANSITIONS.includes(tr.type)) problems.push(`transition.type must be one of ${TRANSITIONS.join(', ')}`);
+      if (tr.duration !== undefined && !(tr.duration >= 0 && tr.duration <= (scene.duration ?? 0) / 2)) problems.push('transition.duration must be 0 to half the scene');
+    }
   }
   return problems;
 }
@@ -272,6 +275,20 @@ export function createReel({ scenes, params = {}, seed = 1, fps = 60 } = {}) {
       index: e.index,
       motionBlur: blurSamples,
     };
+    // Count the saves made while the scene draws, so a scene that throws
+    // part-way is unwound exactly. Otherwise its unbalanced save()s, and any
+    // clip they hold, would leak into every later frame on this context.
+    let depth = 0;
+    const nativeSave = ctx.save;
+    const nativeRestore = ctx.restore;
+    ctx.save = function save() {
+      depth++;
+      return nativeSave.call(this);
+    };
+    ctx.restore = function restore() {
+      if (depth > 0) depth--;
+      return nativeRestore.call(this);
+    };
     try {
       if (e.error) throw e.error;
       ctx.save();
@@ -289,11 +306,15 @@ export function createReel({ scenes, params = {}, seed = 1, fps = 60 } = {}) {
         reported.add(e.scene.id);
         console.error(`[${e.scene.id}] render failed`, err);
       }
-      ctx.restore();
+      while (depth > 0) ctx.restore();
       ctx.save();
       ctx.setTransform(px, 0, 0, px, 0, 0);
       resetState(ctx);
       drawErrorCard(ctx, e.scene, err);
+      ctx.restore();
+    } finally {
+      delete ctx.save;
+      delete ctx.restore;
     }
     ctx.restore();
   }
