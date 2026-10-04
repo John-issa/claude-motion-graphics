@@ -10,7 +10,7 @@ scrub, step frame by frame, type your own title into it, and export it to video.
 
 ![Highlights from the reel: one short clip from each of the eight scenes](media/preview.gif)
 
-**[Watch the full reel with sound](media/claude-motion-reel.mp4)** (46 s, 1280 × 720, MP4 with the procedural soundtrack, rendered by `npm run render`).
+**[Watch the full reel with sound](media/claude-motion-reel.mp4)** (45 s, 1280 × 720, MP4 with the procedural soundtrack, rendered by `npm run render`).
 
 ## Try it
 
@@ -55,12 +55,12 @@ it, with sound if it's on.
 | 02 | Particle Typography | 7.0 s | 6,300 particles in closed form · Curl-noise flow field · Text sampled into a point cloud · 3D sphere and torus in perspective · Additive light, splatted in one pass |
 | 03 | Easing Study | 6.5 s | Penner easing family · Damped spring in closed form · One clock drives every panel · Spacing charts from eased values · Each card exits on its curve, reversed |
 | 04 | Risograph | 6.0 s | Multiply overprint · Procedural halftone · Outline morphing with resampled polygons · Misregistration on twos |
-| 05 | Data Story | 7.0 s | Every number read from the reel's own timeline · Odometer digits in fixed-width cells · Staggered bar growth with measured labels · Live playhead at the true global time |
+| 05 | Data Story | 6.3 s | Every number read from the reel's own timeline · Odometer digits in fixed-width cells · Staggered bar growth with measured labels · Live playhead at the true global time |
 | 06 | Wave Field | 6.5 s | Perspective projection from scratch · Painter's-algorithm depth sort · Flat shading, three light facets · Two-source wave interference |
 | 07 | Liquid Metal | 7.0 s | Raymarched signed distance fields · Smooth-minimum blending · Thin-film iridescence · Analytic inter-reflections · WebGL composited into the 2D frame |
 | 08 | End Card | 5.5 s | Motion paths with Bézier handles · Spring-settled lockup · Credits computed from the reel timeline · Seamless loop into the title |
 
-Total running time 46.1 s (2,766 frames at 60 fps), with scenes overlapping during transitions.
+Total running time 45.4 s (2,724 frames at 60 fps), with scenes overlapping during transitions.
 <!-- scenes:end -->
 
 ## How it works
