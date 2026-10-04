@@ -8,7 +8,9 @@ and no animation libraries: every frame is computed on demand from the current
 time, and the soundtrack is synthesized from the same timeline. You can scrub,
 step frame by frame, type your own title into it, and export it to video.
 
-![Contact sheet of the reel, one frame every 1.5 seconds](media/reel-sheet.jpg)
+![Highlights from the reel: one short clip from each of the eight scenes](media/preview.gif)
+
+**[Watch the full reel with sound](media/claude-motion-reel.mp4)** (46 s, 1280 × 720, MP4 with the procedural soundtrack, rendered by `npm run render`).
 
 ## Try it
 
@@ -43,6 +45,8 @@ after a click, so it starts off). **Record WebM** plays the reel once and saves
 it, with sound if it's on.
 
 ## The scenes
+
+![Poster frames of the eight scenes](media/reel-sheet.jpg)
 
 <!-- scenes:start -->
 | # | Scene | Length | Techniques |
