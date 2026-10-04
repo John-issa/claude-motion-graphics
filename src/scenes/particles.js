@@ -32,24 +32,26 @@ import {
 
 // ---------------------------------------------------------------- constants
 
-const N_TEXT = 5600; // particles that form the title
-const N_DUST = 500; // dim motes for depth
+const N_TEXT = 6000; // particles that form the title
+const N_DUST = 300; // dim motes for depth
 const CX = 960;
 const CY = 540;
 const DT = 1 / 30; // streak shutter: a streak runs from p(t - DT) to p(t)
 
 // Beats, in scene seconds.
 const FORM = 0.8; // first departures from the swirl
-const SWEEP = [2.45, 3.3]; // light sweep across the word
+const SWEEP = [2.42, 3.18]; // light sweep across the word's ink
 const GLOW_IN = [2.12, 2.55]; // the word's light map fades up once it has formed...
 const GLOW_OUT = [3.1, 3.36]; // ...and away during the inhale
 const INHALE = [3.2, 3.44]; // anticipation before the burst
 const BURST = 3.44;
 const BURST_DUR = 0.8;
+const BURST_SPAN = 1000; // design px: words wider than this burst from a base pulled in to it
 const GATHER_DUR = 0.6;
 const MORPH_DUR = 0.45;
 const VORTEX_DUR = 0.34;
 const WARP = 6.17;
+const FLASH = WARP - 0.06; // the singularity flash starts as the vortex closes
 
 // Swirl: a three-armed spiral disc, tilted and squashed, rotating differentially.
 const DISC_SQUASH = 0.58;
@@ -59,6 +61,10 @@ const ROT_S = Math.sin(DISC_ROT);
 const TURB = 22; // curl-noise displacement, design px
 const SWIRL_SHUTTER = 3.6; // longer streaks while swirling, so the flow reads in stills
 
+// The word.
+const SHIMMER = 1.6; // design px of jitter while the word holds
+const SWEEP_SLANT = 0.42; // the sweep band leans like a glint: x shifts by this × (y - CY)
+
 // 3D forms.
 const SPHERE_R = 300;
 const TORUS_R = 370;
@@ -67,20 +73,24 @@ const FOCAL = 1500;
 const TWIST = 2.2; // extra spin a particle picks up while it falls into the vortex
 const GATHER_SWIRL = 0.7; // radians the gather paths orbit the form's axis
 const FORM_GAIN = 0.62; // brightness of the 3D forms at the centre plane
+const LIFT = 52; // design px the camera rises so the tilted torus sits centred
 
 // Look.
 const INDIGO = '#3A2E9C';
 const LIFT_RX = 600; // the indigo lift has compact support inside this ellipse,
 const LIFT_RY = 290; // so the region beyond it never needs uploading
 const MAX_STREAK = 48; // design px
-const MAX_WARP_STREAK = 120; // warp lines may run longer
+const MAX_WARP_STREAK = 80; // warp lines may run longer
 const RAMP = buildRamp([palette.cobalt, palette.violet, palette.pink], 256);
 const lock = spring({ stiffness: 140, damping: 11 }); // the sphere's radius settles with a bounce
 
 /** Smoothstep on [0, 1] progress: a cheap ease-in-out for per-particle hot paths. */
 const smooth = (u) => (u <= 0 ? 0 : u >= 1 ? 1 : u * u * (3 - 2 * u));
 
-/** Flight ease: smooth departure, ~2% overshoot, settle. Cheap enough to call 11k times a frame. */
+/** An envelope rescaled to reach 0 at `floor`, so it can stop being drawn without a pop. */
+const above = (v, floor) => (v > floor ? (v - floor) / (1 - floor) : 0);
+
+/** Flight ease: smooth departure, ~2% overshoot, settle. Cheap enough to call 12k times a frame. */
 function flight(u) {
   if (u >= 1) return 1;
   const s = u * u * (3 - 2 * u) - 1;
@@ -162,7 +172,7 @@ function titleCloud(title, seed) {
   const text = String(title ?? '').trim() || DEFAULT_PARAMS.title;
   const lines = balanceLines(text, 2);
   const probe = makeCanvas(4, 4).getContext('2d');
-  const maxSize = lines.length > 1 ? 240 : 400;
+  const maxSize = lines.length > 1 ? 240 : 500;
   let size = maxSize;
   for (const ln of lines) size = Math.min(size, fitSize(probe, ln, 1460, { family: 'display', weight: 860, maxSize }));
   const pts = textPoints(lines.join('\n'), {
@@ -242,6 +252,17 @@ function lightMap(T) {
   return { a, gw, gh, C, ink, x0: T.x0 - pad, x1: T.x1 + pad, y0: T.y0 - pad, y1: T.y1 + pad, tx0: T.x0, tx1: T.x1 };
 }
 
+/**
+ * The light sweep's path. It crosses the ink, not the frame, so a short title
+ * gets as long a pass as a long one; the band scales with the word and starts
+ * and ends just clear of it, where its light has fallen below 1%.
+ */
+function sweepPath(T) {
+  const band = Math.max(99, 0.09 * (T.x1 - T.x0)); // e-folding half-width, design px
+  const reach = (SWEEP_SLANT * T.h) / 2 + 2.2 * band;
+  return { x0: T.x0 - reach, x1: T.x1 + reach, k: 1 / (band * band) };
+}
+
 /** Indices sorted into vertical strips by x, then by y within each strip. */
 function stripOrder(xs, ys, strips) {
   const n = xs.length;
@@ -301,6 +322,9 @@ function seedTitle(st, T, rnd, noise) {
   }
   const toText = pairUp(sx, sy, T.xs, T.ys, 48);
   const span = Math.max(1, T.x1 - T.x0);
+  // A wide word bursts from a base pulled toward the centre, so the cloud keeps
+  // clear of the frame edges and the slug whatever the title's width.
+  st.pull = Math.max(0, 1 - BURST_SPAN / span);
   for (let i = 0; i < N_TEXT; i++) {
     const j = toText[i];
     const tx = T.xs[j];
@@ -328,8 +352,8 @@ function seedTitle(st, T, rnd, noise) {
     st.w3[i] = 3 + 6 * rnd.next();
     st.p3[i] = rnd.next() * TAU;
     // Burst: mostly up and down out of the letters, a little sideways (depth comes with the sphere).
-    let bx = ((tx - CX) / (span / 2)) * 0.55;
-    let by = (ty - CY) / (T.h / 2);
+    const bx = ((tx - CX) / (span / 2)) * 0.55;
+    const by = (ty - CY) / (T.h / 2);
     const bl = Math.hypot(bx, by) || 1;
     const jit = rnd.gauss() * 0.3;
     const dist = (50 + 160 * Math.pow(rnd.next(), 0.9)) / bl;
@@ -343,13 +367,15 @@ function seedTitle(st, T, rnd, noise) {
     st.tier[i] = tier < 0.025 ? 2 : tier < 0.3 ? 1 : 0;
     st.trail[i] = st.tier[i] > 0 || (i & 7) === 0 ? 1 : 0; // draws a flow streak while swirling
     st.line[i] = st.trail[i] || rnd.next() < 0.3 ? 1 : 0; // draws motion streaks once it flies
-    // Warp exit: a direction, a radius scale (a few linger as the fading core,
-    // so its centre never goes hollow) and when it passes the camera.
+    // Warp exit: a direction, a radius scale and when it passes the camera. A
+    // few linger as the fading core, so its centre never goes hollow; they pass
+    // late enough (T > 0.9 s) that none is still on screen when the scene ends.
     const wa = rnd.next() * TAU;
     st.wx[i] = Math.cos(wa);
     st.wy[i] = Math.sin(wa);
-    st.ws[i] = rnd.next() < 0.07 ? 4 + 66 * rnd.next() : 70 * Math.exp(rnd.next() * Math.log(6));
-    st.wT[i] = 0.45 + 1.05 * rnd.next();
+    const linger = rnd.next() < 0.07;
+    st.ws[i] = linger ? 4 + 66 * rnd.next() : 70 * Math.exp(rnd.next() * Math.log(6));
+    st.wT[i] = linger ? 0.9 + 0.6 * rnd.next() : 0.45 + 1.05 * rnd.next();
     st.wd[i] = 0.03 * rnd.next();
   }
 }
@@ -387,14 +413,15 @@ function seedForms(st, rnd) {
     const z2 = fy[j] * SPHERE_R * G.st + zr * G.ct;
     const k = FOCAL / (FOCAL + z2);
     px[j] = CX + xr * k;
-    py[j] = CY + y2 * k;
+    py[j] = G.cy + y2 * k;
     pz[j] = z2;
   }
   const bxs = new Float32Array(N_TEXT);
   const bys = new Float32Array(N_TEXT);
+  const base = 1 - 0.97 * st.pull;
   for (let i = 0; i < N_TEXT; i++) {
-    bxs[i] = st.tx[i] + st.bvx[i] * 0.97;
-    bys[i] = st.ty[i] + st.bvy[i] * 0.97;
+    bxs[i] = CX + (st.tx[i] - CX) * base + st.bvx[i] * 0.97;
+    bys[i] = CY + (st.ty[i] - CY) * base + st.bvy[i] * 0.97;
   }
   const toSphere = pairUp(bxs, bys, px, py, 40);
   for (let i = 0; i < N_TEXT; i++) {
@@ -403,11 +430,13 @@ function seedForms(st, rnd) {
     st.sr[i] = r;
     st.sy[i] = fy[j];
     st.phi[i] = Math.atan2(fz[j], fx[j]);
-    st.bvz[i] = 0.85 * pz[j] + rnd.gauss() * 50; // burst toward the depth it will land at
+    st.bvz[i] = 0.75 * pz[j] + rnd.gauss() * 40; // burst toward the depth it will land at
     // Sphere → torus: the poles fold through the middle to become the inner ring.
     const v = Math.PI - 2 * Math.acos(Math.max(-1, Math.min(1, -fy[j])));
     st.tr[i] = TORUS_R + TORUS_TUBE * Math.cos(v);
     st.ty3[i] = -TORUS_TUBE * Math.sin(v);
+    // Tube shading, lit from above and outside: 0 where lit, up to 2 in shadow.
+    st.shade[i] = 1 - Math.cos(v - 0.9);
     st.m0[i] = 4.72 + 0.2 * r; // poles open first
     // Vortex: staggered collapse, lightly modulated by azimuth so arms form as it winds up.
     st.c0[i] = 5.5 + 0.22 * rnd.next() + 0.1 * (0.5 + 0.5 * Math.sin(3 * st.phi[i]));
@@ -428,6 +457,32 @@ function seedDust(st, rnd) {
   }
 }
 
+/**
+ * Renumber the particles in the word's strip order. Every pairing above keeps
+ * neighbours together, so in each phase consecutive particles land near each
+ * other and their splats share cache lines, which matters more than the maths.
+ */
+function renumber(st) {
+  const order = stripOrder(st.tx, st.ty, 48);
+  for (const key of Object.keys(st)) {
+    const a = st[key];
+    if (!ArrayBuffer.isView(a) || a.length !== N_TEXT) continue;
+    const b = new a.constructor(N_TEXT);
+    for (let k = 0; k < N_TEXT; k++) b[k] = a[order[k]];
+    st[key] = b;
+  }
+}
+
+/**
+ * Draw a few frames covering every beat into a small private raster, so the
+ * JIT has compiled the builders and the hot path before the first visible
+ * frame: otherwise the iris opens on a stall of several dropped frames.
+ */
+function warmUp(st) {
+  const R = makeRaster(0.2, null);
+  for (const t of [0.5, 1.5, 2.8, 3.6, 4.0, 5.9, 6.3]) drawFrame(st, R, t);
+}
+
 function setup({ params, seed }) {
   const rnd = createRandom((seed >>> 0) * 7 + 11);
   const noise = createNoise((seed >>> 0) + 5);
@@ -435,8 +490,9 @@ function setup({ params, seed }) {
   const st = {
     flow: buildFlow(noise),
     light: null, // the title's light map
-    lit: new Map(), // light map baked into the ground, per output width (lazy)
+    sweep: null, // the light sweep's path across the ink
     dens: 1, // brightness scale for the word, from its ink area
+    pull: 0, // how far the burst's base contracts toward the centre
     // swirl: polar home in the disc, angular speed
     gr: f32(), ga: f32(), gw: f32(),
     // title target, colour (ramp offset), departure and arrival, path bend
@@ -445,8 +501,8 @@ function setup({ params, seed }) {
     w1: f32(), p1: f32(), w2: f32(), p2: f32(), w3: f32(), p3: f32(),
     // burst vector, gather start
     bvx: f32(), bvy: f32(), bvz: f32(), g0: f32(),
-    // 3D: sphere (radial, height, azimuth), torus (radial, height), morph and collapse starts
-    sr: f32(), sy: f32(), phi: f32(), tr: f32(), ty3: f32(), m0: f32(), c0: f32(),
+    // 3D: sphere (radial, height, azimuth), torus (radial, height, shading), morph and collapse starts
+    sr: f32(), sy: f32(), phi: f32(), tr: f32(), ty3: f32(), shade: f32(), m0: f32(), c0: f32(),
     // warp: direction, radius scale, exit time, delay
     wx: f32(), wy: f32(), ws: f32(), wT: f32(), wd: f32(),
     // look
@@ -457,12 +513,16 @@ function setup({ params, seed }) {
   };
   const T = titleCloud(params.title, seed >>> 0);
   st.light = lightMap(T);
-  // Short titles pack the same particles into less ink; dim them so they glow rather than clip.
-  st.dens = Math.min(1.1, Math.max(0.45, Math.pow(st.light.ink / 172000, 0.6)));
+  st.sweep = sweepPath(T);
+  // Brightness follows the ink area each particle covers: a short title packs
+  // them densely, so each glows less rather than clipping; a big one spreads them.
+  st.dens = Math.min(1.25, Math.max(0.45, Math.pow(st.light.ink / N_TEXT / 30.7, 0.6)));
   seedSwirl(st, rnd);
   seedTitle(st, T, rnd, noise);
   seedForms(st, rnd);
   seedDust(st, rnd);
+  renumber(st);
+  warmUp(st);
   return st;
 }
 
@@ -473,14 +533,21 @@ function frameGlobals(t, G) {
   G.t = t;
   G.scale = 1 - 0.045 * ease.inOutSine(seg(t, INHALE[0], INHALE[1])); // the inhale
   G.charge = 1 + 0.35 * ease.inQuad(seg(t, INHALE[0], BURST)) * (1 - seg(t, BURST, BURST + 0.3));
-  G.shimmer = smoothstep(1.9, 2.5, t) * 0.9;
-  G.smoke = t - BURST; // burst turbulence clock
+  G.shimmer = smoothstep(1.9, 2.5, t) * (1 - smoothstep(BURST, BURST + 0.2, t)) * SHIMMER;
+  // The burst: its eased reach, and the curl turbulence's strength and clock.
+  const ub = (t - BURST) / BURST_DUR;
+  G.eb = ease.outExpo(ub);
+  G.env = smoothstep(0, 0.3, ub) * 75;
+  G.ft = 0.5 + 2.5 * (ub < 0 ? 0 : ub > 1 ? 1 : ub);
   const vx = t - 5.3;
   G.yaw = 1.1 * (t - 3.6) + (vx > 0 ? 1.7 * vx * vx : 0); // spins up into the vortex
   const tilt = 0.38 + 0.57 * ease.inOutCubic(seg(t, 4.8, 5.45)) + 0.25 * ease.inOutSine(seg(t, 5.5, 6.1));
   G.ct = Math.cos(tilt);
   G.st = Math.sin(tilt);
   G.rs = SPHERE_R * (0.86 + 0.14 * lock(t - 3.7));
+  // Tilted, the torus's near side swells toward the camera; the camera rises
+  // to keep it centred, then settles back onto the singularity as it collapses.
+  G.cy = CY - LIFT * ease.inOutSine(seg(t, 4.75, 5.4)) * (1 - ease.inOutSine(seg(t, 5.6, 6.12)));
   return G;
 }
 
@@ -510,7 +577,7 @@ function textAt(st, i, G, out) {
 /**
  * Camera-space position of particle i on its 3D form (sphere → torus →
  * vortex, spun about its axis and tilted toward the camera), written to W.
- * Returns a brightness fade.
+ * Returns a brightness factor: tube shading on the torus, a fade in the vortex.
  */
 function form3(st, i, G, W) {
   const t = G.t;
@@ -520,15 +587,16 @@ function form3(st, i, G, W) {
   let rho = rs + (st.tr[i] - rs) * em;
   let y = ys + (st.ty3[i] - ys) * em;
   let phi = st.phi[i] + G.yaw;
+  let fade = 1 - 0.4 * em * st.shade[i];
   const uc = (t - st.c0[i]) / VORTEX_DUR;
-  let fade = 1;
   if (uc > 0) {
     // Falls faster as it nears the centre and spins up like water down a drain.
     const ec = uc >= 1 ? 1 : uc * uc;
     rho *= 1 - ec;
     y *= 1 - ec;
     phi += (TWIST * ec) / (1 - 0.7 * ec);
-    fade = 1 - 0.45 * ec; // the crowd converging would otherwise saturate to white
+    // The shading melts away, and the crowd converging would otherwise saturate to white.
+    fade = (fade + (1 - fade) * ec) * (1 - 0.45 * ec);
   }
   const x3 = rho * Math.cos(phi);
   const z3 = rho * Math.sin(phi);
@@ -538,11 +606,11 @@ function form3(st, i, G, W) {
   return fade;
 }
 
-/** Perspective projection of camera-space (x, y, z) into P: [x, y, depth brightness, scale]. */
-function project(x, y, z, P) {
+/** Perspective projection of camera-space (x, y, z) about (CX, cy) into P: [x, y, depth brightness, scale]. */
+function project(x, y, z, cy, P) {
   const k = FOCAL / (FOCAL + z);
   P[0] = CX + x * k;
-  P[1] = CY + y * k;
+  P[1] = cy + y * k;
   const dn = z / 320;
   P[2] = 1 - 0.62 * (dn < -1 ? -1 : dn > 1 ? 1 : dn); // nearer is brighter, the far side dim
   P[3] = k;
@@ -566,21 +634,24 @@ function formAt(st, i, G, P) {
     P[2] = 0.45 + 2 * tw; // dim while crowded at the core, brightening as it flies
     P[3] = 1;
     P[4] = 1;
+    P[5] = 0;
     return;
   }
   const fade = form3(st, i, G, W3);
-  project(W3[0], W3[1], W3[2], P);
+  project(W3[0], W3[1], W3[2], G.cy, P);
   P[2] *= FORM_GAIN * fade;
   P[4] = 0.55; // a shorter shutter keeps the spinning forms crisp
+  P[5] = 1;
 }
 
 /**
  * Position of particle i at the time in G, as a closed-form function of t:
- * P = [x, y, brightness, perspective scale, streak shutter].
+ * P = [x, y, brightness, perspective scale, streak shutter, weight on the 3D forms].
  */
 function locate(st, i, G, P) {
   const t = G.t;
   P[4] = 1;
+  P[5] = 0;
   if (t < st.arr[i]) {
     // Swirl, then a curved flight into the title.
     swirl(st, i, t, P);
@@ -611,12 +682,12 @@ function locate(st, i, G, P) {
     return;
   }
   // Burst outward in depth, stirred by the curl field like smoke...
-  const ub = G.smoke / BURST_DUR;
-  const eb = ease.outExpo(ub);
-  flowAt(st.flow, T2[0], T2[1], 0.5 + 2.5 * Math.min(ub, 1), FL);
-  const env = smoothstep(0, 0.3, ub) * 75;
-  let x = T2[0] - CX + st.bvx[i] * eb + FL[0] * env;
-  let y = T2[1] - CY + st.bvy[i] * eb + FL[1] * env;
+  const eb = G.eb;
+  const env = G.env;
+  flowAt(st.flow, T2[0], T2[1], G.ft, FL);
+  const base = 1 - st.pull * eb;
+  let x = (T2[0] - CX) * base + st.bvx[i] * eb + FL[0] * env;
+  let y = (T2[1] - CY) * base + st.bvy[i] * eb + FL[1] * env;
   let z = st.bvz[i] * eb;
   let gain = G.charge * (st.dens + (1 - st.dens) * eb);
   let e = 0;
@@ -635,34 +706,46 @@ function locate(st, i, G, P) {
     x = xr;
     gain += (FORM_GAIN * fade - gain) * e;
   }
-  project(x, y, z, P);
+  project(x, y, z, G.cy, P);
   P[2] *= gain;
   P[4] = 1 - 0.45 * e;
+  P[5] = e;
 }
 
 // ---------------------------------------------------------------- raster
 
 const rasters = new Map();
 
-/** Output-resolution splat buffer, ground and kernels, cached per size. */
-function raster(px) {
+/**
+ * Splat buffer, ground and kernels for physical scale px. With a canvas it can
+ * present; without one it is a private scratch raster for warmUp.
+ */
+function makeRaster(px, canvas) {
   const pw = Math.round(1920 * px);
   const ph = Math.round(1080 * px);
-  const key = `${pw}x${ph}`;
-  let R = rasters.get(key);
-  if (R) return R;
-  const canvas = makeCanvas(pw, ph);
-  const c2 = canvas.getContext('2d', { willReadFrequently: true });
-  const img = c2.createImageData(pw, ph);
-  R = {
-    pw, ph, px, canvas, c2, img,
-    data: img.data,
-    bg: ground(pw, ph),
+  const c2 = canvas ? canvas.getContext('2d', { willReadFrequently: true }) : null;
+  const img = c2 ? c2.createImageData(pw, ph) : null;
+  const data = img ? img.data : new Uint8ClampedArray(pw * ph * 4);
+  const bg = ground(pw, ph);
+  return {
+    pw, ph, px, canvas, c2, img, data,
+    data32: new Uint32Array(data.buffer, data.byteOffset, pw * ph), // whole-pixel views
+    bg,
+    bg32: new Uint32Array(bg.buffer),
     core: kernel(2.2, px),
     halo: kernel(5, px),
     haze: kernel(12, px),
+    dirty: { x0: 0, y0: 0, x1: pw, y1: ph }, // where the last frame drew: everything, at first
+    glow: null, // the word's bloom, built for one title at a time
   };
-  R.flash = flashKernel(R);
+}
+
+/** The raster for an output size, cached (the last few sizes only). */
+function raster(px) {
+  const key = `${Math.round(1920 * px)}x${Math.round(1080 * px)}`;
+  let R = rasters.get(key);
+  if (R) return R;
+  R = makeRaster(px, makeCanvas(Math.round(1920 * px), Math.round(1080 * px)));
   if (rasters.size >= 3) rasters.clear();
   rasters.set(key, R);
   return R;
@@ -722,14 +805,15 @@ function ground(pw, ph) {
 }
 
 /**
- * The ground with the title's light map added, over the light map's rectangle
- * at this output size. Its rows are copied over the plain ground while the
- * word holds. Cached on the state, since it depends on the title.
+ * The word's bloom at this output size: its light map coloured along the ramp,
+ * as light to add to the ground over the light map's rectangle, one 32-bit
+ * pixel per entry. Each channel is limited to what the ground leaves below 255,
+ * so it can be scaled and added without clamping (see lightWord). Kept on the
+ * raster, so it is evicted with it.
  */
-function litGround(st, R) {
-  let L = st.lit.get(R.pw);
-  if (L) return L;
+function wordGlow(st, R) {
   const M = st.light;
+  if (R.glow && R.glow.M === M) return R.glow;
   const k = R.px;
   const x0 = Math.max(0, Math.floor(M.x0 * k));
   const y0 = Math.max(0, Math.floor(M.y0 * k));
@@ -761,15 +845,13 @@ function litGround(st, R) {
       const e = 0.42 * v;
       const src = ((y0 + y) * R.pw + x0 + x) * 4;
       const dst = (y * w + x) * 4;
-      data[dst] = R.bg[src] + RAMP[hq] * e;
-      data[dst + 1] = R.bg[src + 1] + RAMP[hq + 1] * e;
-      data[dst + 2] = R.bg[src + 2] + RAMP[hq + 2] * e;
-      data[dst + 3] = 255;
+      data[dst] = Math.min(255 - R.bg[src], RAMP[hq] * e);
+      data[dst + 1] = Math.min(255 - R.bg[src + 1], RAMP[hq + 1] * e);
+      data[dst + 2] = Math.min(255 - R.bg[src + 2], RAMP[hq + 2] * e);
     }
   }
-  L = { x0, y0, w, h, data };
-  st.lit.set(R.pw, L);
-  return L;
+  R.glow = { M, x0, y0, w, h, light: new Uint32Array(data.buffer) };
+  return R.glow;
 }
 
 /**
@@ -803,23 +885,6 @@ function kernel(radius, px) {
     }
   }
   return { rad, K, w, energy: (Math.PI * rho * rho) / 3 };
-}
-
-/** Wide radial glow for the singularity flash: peak 1 at the centre, zero at the rim. */
-function flashKernel(R) {
-  const rad = Math.ceil(380 * R.px);
-  const K = 2 * rad + 1;
-  const w = new Float32Array(K * K);
-  for (let y = 0; y < K; y++) {
-    for (let x = 0; x < K; x++) {
-      const q = Math.max(0, 1 - ((x - rad) ** 2 + (y - rad) ** 2) / (rad * rad));
-      const q2 = q * q;
-      const q4 = q2 * q2;
-      w[y * K + x] = 0.65 * q2 * q + 0.35 * q4 * q4 * q4 * q2;
-    }
-  }
-  // Always drawn at the frame centre, so one weight table serves every sub-pixel phase.
-  return { rad, K, w: new Array(16).fill(w) };
 }
 
 /** Add kernel S centred at physical (x, y). r, g, b are colour × energy; the buffer clamps like 'lighter'. */
@@ -948,12 +1013,88 @@ function streak(R, x0, y0, x1, y1, r, g, b) {
   }
 }
 
+// Singularity flash: radial falloffs tabulated over s = d²/radius², 0..1.
+const FLASH_N = 2048;
+const BLOOM_R = 280; // design px
+const PIN_R = 64;
+const LINE_R = 470; // half-length of the anamorphic streak
+const falloff = (fn) => Float32Array.from({ length: FLASH_N }, (_, i) => fn(i / FLASH_N));
+const BLOOM = falloff((s) => (1 - s) ** 2 * (0.3 * (1 - s) ** 2 + 0.7 / (1 + 80 * s))); // a peaked glow, soft skirt
+const PIN = falloff((s) => (1 - s) ** 14); // the white-hot point
+
+/** Additive bloom and pinpoint, centred on the frame, in one pass over the bloom's disc. */
+function radialFlash(R, bloom, pin) {
+  const k = R.px;
+  const cx = CX * k;
+  const cy = CY * k;
+  const rb = BLOOM_R * k;
+  const sb = FLASH_N / (rb * rb);
+  const sp = sb * (BLOOM_R / PIN_R) ** 2;
+  const vi = parse(palette.violet);
+  const a = 0.85 * bloom;
+  const cr = (vi[0] * 0.6 + 100) * a;
+  const cg = (vi[1] * 0.6 + 100) * a;
+  const cb = (vi[2] * 0.6 + 100) * a;
+  const white = 380 * pin;
+  const d = R.data;
+  const y0 = Math.max(0, Math.floor(cy - rb));
+  const y1 = Math.min(R.ph, Math.ceil(cy + rb));
+  for (let y = y0; y < y1; y++) {
+    const dy = y + 0.5 - cy;
+    const half = Math.sqrt(Math.max(0, rb * rb - dy * dy));
+    const x0 = Math.max(0, Math.floor(cx - half));
+    const x1 = Math.min(R.pw, Math.ceil(cx + half));
+    let o = (y * R.pw + x0) * 4;
+    for (let x = x0; x < x1; x++, o += 4) {
+      const dx = x + 0.5 - cx;
+      const d2 = dx * dx + dy * dy;
+      const ib = d2 * sb;
+      if (ib >= FLASH_N) continue;
+      const w = BLOOM[ib | 0];
+      const ip = d2 * sp;
+      const p = ip < FLASH_N ? white * PIN[ip | 0] : 0;
+      d[o] += cr * w + p;
+      d[o + 1] += cg * w + p;
+      d[o + 2] += cb * w + p;
+    }
+  }
+  grow(CX - BLOOM_R, CY - BLOOM_R);
+  grow(CX + BLOOM_R, CY + BLOOM_R);
+}
+
+/** A thin horizontal anamorphic streak through the singularity, about two pixels tall at any size. */
+function anamorphic(R, a) {
+  const k = R.px;
+  const cx = CX * k;
+  const cy = CY * k;
+  const half = LINE_R * k;
+  const amp = 1.9 * a;
+  const d = R.data;
+  const x0 = Math.max(0, Math.floor(cx - half));
+  const x1 = Math.min(R.pw, Math.ceil(cx + half));
+  for (let y = Math.max(0, Math.floor(cy - 2)); y < Math.min(R.ph, Math.ceil(cy + 2)); y++) {
+    const dy = Math.abs(y + 0.5 - cy) / 2.2;
+    const wy = amp * (1 - dy) * (1 - dy);
+    let o = (y * R.pw + x0) * 4;
+    for (let x = x0; x < x1; x++, o += 4) {
+      const q = 1 - Math.abs(x + 0.5 - cx) / half;
+      if (q <= 0) continue;
+      const w = wy * q * q * q;
+      d[o] += 190 * w;
+      d[o + 1] += 178 * w;
+      d[o + 2] += 255 * w;
+    }
+  }
+  grow(CX - LINE_R, CY - 3);
+  grow(CX + LINE_R, CY + 3);
+}
+
 // ---------------------------------------------------------------- frame
 
 const G1 = {};
 const G0 = {};
-const P1 = new Float64Array(5);
-const P0 = new Float64Array(5);
+const P1 = new Float64Array(6);
+const P0 = new Float64Array(6);
 const box = { x0: 0, y0: 0, x1: 0, y1: 0 }; // design-space bounds of everything lit this frame
 
 function grow(x, y) {
@@ -963,24 +1104,43 @@ function grow(x, y) {
   if (y > box.y1) box.y1 = y;
 }
 
-/** Fade the word's light map into the ground: rows copied at full strength, lerped while fading. */
+/**
+ * Reset the buffer to the ground. Only the last frame's dirty rectangle has
+ * anything else in it, so only that is copied back.
+ */
+function clearBuffer(R) {
+  const D = R.dirty;
+  const row = R.pw * 4;
+  if (D.x0 === 0 && D.x1 === R.pw) {
+    R.data.set(R.bg.subarray(D.y0 * row, D.y1 * row), D.y0 * row);
+  } else {
+    for (let y = D.y0; y < D.y1; y++) R.data.set(R.bg.subarray(y * row + D.x0 * 4, y * row + D.x1 * 4), y * row + D.x0 * 4);
+  }
+  // Until present() records this frame's bounds, treat the whole buffer as dirty.
+  D.x0 = 0;
+  D.y0 = 0;
+  D.x1 = R.pw;
+  D.y1 = R.ph;
+}
+
+/**
+ * Add the word's bloom into the buffer while it holds. The buffer is plain
+ * ground here, so each pixel is ground + light × glow, computed on whole
+ * 32-bit pixels: two channels per multiply, in 8.8 fixed point.
+ */
 function lightWord(st, R, t) {
-  const L = litGround(st, R); // built on the first frame at this size, so the hold never hitches
+  const L = wordGlow(st, R); // built on the first frame at this size, so the hold never hitches
   const glow = smooth((t - GLOW_IN[0]) / (GLOW_IN[1] - GLOW_IN[0])) * (1 - smooth((t - GLOW_OUT[0]) / (GLOW_OUT[1] - GLOW_OUT[0])));
   if (glow <= 0.004) return;
-  const d = R.data;
-  const row = L.w * 4;
-  for (let y = 0; y < L.h; y++) {
-    const src = y * row;
-    const dst = ((L.y0 + y) * R.pw + L.x0) * 4;
-    if (glow > 0.996) {
-      d.set(L.data.subarray(src, src + row), dst);
-      continue;
-    }
-    for (let j = 0, o = dst; j < row; j += 4, o += 4) {
-      d[o] += (L.data[src + j] - d[o]) * glow;
-      d[o + 1] += (L.data[src + j + 1] - d[o + 1]) * glow;
-      d[o + 2] += (L.data[src + j + 2] - d[o + 2]) * glow;
+  const g = Math.round(glow * 256);
+  const A = L.light;
+  const B = R.bg32;
+  const D = R.data32;
+  for (let y = 0, j = 0; y < L.h; y++) {
+    let o = (L.y0 + y) * R.pw + L.x0;
+    for (let x = 0; x < L.w; x++, o++, j++) {
+      const a = A[j];
+      D[o] = B[o] + ((((a & 0xff00ff) * g) >>> 8) & 0xff00ff) + ((((a >>> 8) & 0xff00ff) * g) & 0xff00ff00);
     }
   }
   grow(L.x0 / R.px, L.y0 / R.px);
@@ -994,8 +1154,10 @@ function drawParticles(st, R, t) {
   const haloE = R.halo.energy * 0.26;
   const hazeE = R.haze.energy * 0.07;
   const lineK = Math.min(1, k * 1.5); // streaks are ~1 px wide; thin them at small sizes
-  const sweepX = -300 + 2520 * ease.inOutSine(seg(t, SWEEP[0], SWEEP[1]));
-  const sweepOn = t > SWEEP[0] && t < BURST;
+  const S = st.sweep;
+  const us = seg(t, SWEEP[0], SWEEP[1]);
+  const sweepOn = us > 0 && us < 1;
+  const sweepX = S.x0 + (S.x1 - S.x0) * (0.5 * us + 0.5 * ease.inOutSine(us)); // near-even pace, soft ends
   const warp = t > WARP;
   for (let i = 0; i < N_TEXT; i++) {
     locate(st, i, G1, P1);
@@ -1003,21 +1165,30 @@ function drawParticles(st, R, t) {
     const y = P1[1];
     grow(x, y);
     // Velocity (streaks and heat) only for the ~60% of particles that draw lines,
-    // and never while resting in the title: streaks overlap, so the rest are not missed.
+    // and never while resting: in the title, or on the sphere before it morphs,
+    // where streaks would be under a pixel. Streaks overlap, so the rest are not missed.
+    const flying = t < st.arr[i];
     let mx = 0;
     let my = 0;
     let move = 0;
-    if (t < st.arr[i] ? st.trail[i] || (t > st.dep[i] && st.line[i]) : t >= BURST && st.line[i]) {
+    if (flying ? st.trail[i] || (t > st.dep[i] && st.line[i]) : t >= BURST && st.line[i] && (t < st.g0[i] + GATHER_DUR || t > st.m0[i])) {
       locate(st, i, G0, P0);
       mx = x - P0[0];
       my = y - P0[1];
       move = Math.hypot(mx, my);
     }
-    let heat = 0.7 * smoothstep(1800, 6000, move / DT); // white-hot cores on the fastest
+    // White-hot cores on the fastest particles, judged against each phase's own speeds.
+    let heat = 0;
+    if (move > 0) {
+      const v = move / DT;
+      if (flying) heat = 0.8 * smoothstep(420, 1100, v); // streaming into the word
+      else if (t < st.g0[i]) heat = smoothstep(900, 2200, v); // the burst's release
+      else heat = 0.7 * smoothstep(1800, 6000, v); // gather, vortex and warp
+    }
     let I = st.lum[i] * P1[2] * P1[3] * P1[3];
     if (sweepOn) {
-      const dd = x - sweepX + (y - CY) * 0.42;
-      const boost = Math.exp(-(dd * dd) / 9800);
+      const dd = x - sweepX + (y - CY) * SWEEP_SLANT;
+      const boost = Math.exp(-dd * dd * S.k);
       I *= 1 + 1.2 * boost;
       heat += 0.6 * boost;
     }
@@ -1030,14 +1201,23 @@ function drawParticles(st, R, t) {
     const hy = y * k;
     const e = I * coreE;
     splat(R, R.core, hx, hy, (r + (255 - r) * heat) * e, (g + (255 - g) * heat) * e, (b + (255 - b) * heat) * e);
-    const tier = warp ? 0 : st.tier[i]; // warp lines stay crisp: no halos
-    if (tier) {
-      const eh = I * haloE;
+    // Halos: a fixed few, except on the 3D forms, where they follow depth so
+    // near points swell and the far side stays fine. Warp lines stay crisp.
+    let hw = warp ? 0 : st.tier[i] > 0 ? 1 : 0;
+    let zw = warp ? 0 : st.tier[i] === 2 ? 1 : 0;
+    const f = P1[5];
+    if (f > 0) {
+      const near = smoothstep(1.06, 1.24, P1[3]);
+      hw += (1.6 * near - hw) * f;
+      zw *= 1 - f * (1 - near);
+    }
+    if (hw > 0.01) {
+      const eh = I * haloE * hw;
       splat(R, R.halo, hx, hy, r * eh, g * eh, b * eh);
-      if (tier === 2) {
-        const ez = I * hazeE;
-        splat(R, R.haze, hx, hy, r * ez, g * ez, b * ez);
-      }
+    }
+    if (zw > 0.01) {
+      const ez = I * hazeE * zw;
+      splat(R, R.haze, hx, hy, r * ez, g * ez, b * ez);
     }
     // Motion streak from where the particle was a shutter ago, clipped to a maximum length.
     const len = move * P1[4];
@@ -1047,7 +1227,7 @@ function drawParticles(st, R, t) {
       const tx = x - mx * cut;
       const ty = y - my * cut;
       grow(tx, ty);
-      const warm = heat * 0.6;
+      const warm = heat * 0.6; // heads go white, tails keep their colour
       streak(R, tx * k, ty * k, hx, hy, (r + (255 - r) * warm) * a, (g + (255 - g) * warm) * a, (b + (255 - b) * warm) * a);
     }
   }
@@ -1074,6 +1254,7 @@ function drawDust(st, R, t) {
       y0 = CY + (y - CY) * (1 + f * tp * tp);
       x = CX + (x - CX) * (1 + f * tw * tw);
       y = CY + (y - CY) * (1 + f * tw * tw);
+      grow(x0, y0);
     } else if (lit <= 0) continue;
     grow(x, y);
     const I = (0.15 + 0.35 * z) * Math.sqrt(lit) * (0.75 + 0.25 * Math.sin(t * st.dw[i] + st.dp[i])) * (tw > 0 ? 1 + 2.5 * tw : 1);
@@ -1090,16 +1271,31 @@ function drawDust(st, R, t) {
   }
 }
 
-/** Singularity flash as the vortex closes and the warp begins. */
+/**
+ * Singularity flash as the vortex closes: a violet bloom with a white-hot
+ * pinpoint and a thin anamorphic streak, each on its own quick decay.
+ */
 function drawFlash(R, t) {
-  const fl = pulse(t, WARP - 0.06, 0.08, 0.22);
-  if (fl <= 0.01) return;
-  const F = R.flash;
-  const vi = parse(palette.violet);
-  const a = fl * 0.9;
-  splat(R, F, CX * R.px, CY * R.px, (vi[0] * 0.6 + 100) * a, (vi[1] * 0.6 + 100) * a, (vi[2] * 0.6 + 100) * a);
-  grow(CX - F.rad / R.px, CY - F.rad / R.px);
-  grow(CX + F.rad / R.px, CY + F.rad / R.px);
+  const bloom = above(pulse(t, FLASH, 0.08, 0.15), 0.06);
+  const pin = above(pulse(t, FLASH + 0.02, 0.06, 0.08), 0.02);
+  const line = above(pulse(t, FLASH + 0.02, 0.05, 0.12), 0.02);
+  if (bloom > 0 || pin > 0) radialFlash(R, bloom, pin);
+  if (line > 0) anamorphic(R, line);
+}
+
+/** Everything lit at time t, into the raster's buffer; box ends up bounding it. */
+function drawFrame(st, R, t) {
+  frameGlobals(t, G1);
+  frameGlobals(t - DT, G0);
+  clearBuffer(R);
+  box.x0 = CX - LIFT_RX;
+  box.x1 = CX + LIFT_RX;
+  box.y0 = CY - LIFT_RY;
+  box.y1 = CY + LIFT_RY;
+  lightWord(st, R, t);
+  drawParticles(st, R, t);
+  drawDust(st, R, t);
+  drawFlash(R, t);
 }
 
 /** Upload and composite only the lit rectangle, in whole pixels (1:1, so no resampling). */
@@ -1113,6 +1309,11 @@ function present(ctx, R) {
   if (x1 <= x0 || y1 <= y0) return;
   R.c2.putImageData(R.img, 0, 0, x0, y0, x1 - x0, y1 - y0);
   ctx.drawImage(R.canvas, x0, y0, x1 - x0, y1 - y0, x0 / k, y0 / k, (x1 - x0) / k, (y1 - y0) / k);
+  const D = R.dirty;
+  D.x0 = x0;
+  D.y0 = y0;
+  D.x1 = x1;
+  D.y1 = y1;
 }
 
 export default defineScene({
@@ -1125,7 +1326,7 @@ export default defineScene({
   // and costs a full-frame composite; the splat buffer carries its own dither.
   post: { grain: 0 },
   notes: [
-    '6,100 particles in closed form',
+    '6,300 particles in closed form',
     'Curl-noise flow field',
     'Text sampled into a point cloud',
     '3D sphere and torus in perspective',
@@ -1133,24 +1334,12 @@ export default defineScene({
   ],
   setup,
   render(ctx, s) {
-    const st = s.state;
     const R = raster(s.px);
-    const t = s.t;
-    frameGlobals(t, G1);
-    frameGlobals(t - DT, G0);
     // Flat night everywhere (a cheap clear); the buffer is uploaded only where
-    // there is light: the lift, plus the bounds of everything splatted below.
+    // there is light: the lift, plus the bounds of everything splatted.
     ctx.fillStyle = palette.night;
     ctx.fillRect(0, 0, s.W, s.H);
-    R.data.set(R.bg);
-    box.x0 = CX - LIFT_RX;
-    box.x1 = CX + LIFT_RX;
-    box.y0 = CY - LIFT_RY;
-    box.y1 = CY + LIFT_RY;
-    lightWord(st, R, t);
-    drawParticles(st, R, t);
-    drawDust(st, R, t);
-    drawFlash(R, t);
+    drawFrame(s.state, R, s.t);
     present(ctx, R);
   },
 });
