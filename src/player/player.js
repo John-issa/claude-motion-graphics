@@ -826,9 +826,19 @@ export function createPlayer({ reel, target = 'dev', prefs = {} }) {
 
   // ---------- Export ----------
 
-  const support = target === 'artifact' ? null : recordingSupport(el.canvas);
-  const recLabel = support ? `Record ${support.ext === 'mp4' ? 'MP4' : 'WebM'}` : 'Record WebM';
-  const fileName = `${FILE_BASE}.${support ? support.ext : 'webm'}`;
+  // In the artifact sandbox a page can't start downloads itself; the
+  // viewer's `downloads` capability offers the file instead (with a
+  // confirmation the viewer can decline). Until it resolves, recording stays
+  // off there and the page shows how to export from the repo.
+  let support = target === 'artifact' ? null : recordingSupport(el.canvas);
+  let saver = null;
+  let recLabel = 'Record WebM';
+  let fileName = `${FILE_BASE}.webm`;
+  const describeSupport = () => {
+    recLabel = support ? `Record ${support.ext === 'mp4' ? 'MP4' : 'WebM'}` : 'Record WebM';
+    fileName = `${FILE_BASE}.${support ? support.ext : 'webm'}`;
+  };
+  describeSupport();
   const nowrap = (text) => {
     const span = document.createElement('span');
     span.className = 'nowrap';
@@ -841,6 +851,21 @@ export function createPlayer({ reel, target = 'dev', prefs = {} }) {
   if (target === 'artifact') {
     el.exportRow.hidden = true;
     el.exportNote.hidden = false;
+    const use = window.claude && typeof window.claude.use === 'function' ? window.claude.use('downloads') : null;
+    Promise.resolve(use)
+      .then((downloads) => {
+        const found = downloads ? recordingSupport(el.canvas) : null;
+        if (!found) return;
+        saver = downloads;
+        support = found;
+        describeSupport();
+        el.recText.textContent = recLabel;
+        idleRecStatus();
+        el.exportRow.hidden = false;
+        el.exportNote.hidden = true;
+        if (state.ready && !rec) el.rec.disabled = false;
+      })
+      .catch(() => {});
   } else {
     el.recText.textContent = recLabel;
     if (support) idleRecStatus();
@@ -942,9 +967,23 @@ export function createPlayer({ reel, target = 'dev', prefs = {} }) {
       setRecStatus('Recording cancelled. Nothing was saved.');
       return;
     }
+    const size = `${(blob.size / 1048576).toFixed(1)} MB`;
+    if (saver) {
+      setRecStatus('Recorded ', nowrap(fileName), `, ${size}. Confirm the download to save it.`);
+      saver.save({ filename: fileName, data: blob }).then(
+        (res) => setRecStatus(res && res.status === 'delivered' ? 'Sent ' : 'Saved ', nowrap(fileName), `, ${size}.`),
+        (err) => {
+          const code = err && err.code;
+          if (code === 'declined') setRecStatus('Not saved: the download was declined.');
+          else if (code === 'rate_limited') setRecStatus('Another download is waiting for an answer. Record again in a moment.');
+          else setRecStatus('Saving isn\'t available here. Clone the repo and run ', nowrap('npm run render'), ' for an MP4.');
+        },
+      );
+      return;
+    }
     try {
       saveBlob(blob, fileName);
-      setRecStatus('Saved ', nowrap(fileName), `, ${(blob.size / 1048576).toFixed(1)} MB.`);
+      setRecStatus('Saved ', nowrap(fileName), `, ${size}.`);
     } catch {
       setRecStatus('The browser blocked the download. Clone the repo and run ', nowrap('npm run render'), ' instead.');
     }
