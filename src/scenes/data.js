@@ -798,6 +798,7 @@ export default defineScene({
   id: 'data',
   title: 'Data Story',
   duration: 7.0,
+  poster: 4.6,
   color: '#2446FF',
   transition: { type: 'push', duration: 0.7, dir: 'up' },
   notes: [

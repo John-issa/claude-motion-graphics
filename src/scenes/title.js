@@ -392,6 +392,7 @@ export default defineScene({
   id: 'title',
   title: 'Title Sequence',
   duration: 6.0,
+  poster: 2.8,
   color: '#FF3B1F',
   slug: false,
   uses: ['title'], // the layout reads the title, never the seed

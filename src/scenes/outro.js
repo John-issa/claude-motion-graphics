@@ -402,6 +402,7 @@ export default defineScene({
   id: 'outro',
   title: 'End Card',
   duration: 5.5,
+  poster: 3.0,
   color: '#EFEBE3',
   transition: { type: 'fade', duration: 0.8 },
   slug: false,

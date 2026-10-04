@@ -557,6 +557,7 @@ export default defineScene({
   id: 'shader',
   title: 'Liquid Metal',
   duration: DUR,
+  poster: 2.05,
   color: '#9AA4FF',
   usesWebGL: true,
   transition: { type: 'iris', duration: 0.9 },

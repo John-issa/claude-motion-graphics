@@ -117,6 +117,7 @@ export default defineScene({
   id: 'riso',
   title: 'Risograph',
   duration: 6.0,
+  poster: 4.1,
   color: '#FF48B0',
   transition: { type: 'blinds', duration: 0.8, color: '#FF48B0' },
   notes: ['Multiply overprint', 'Procedural halftone', 'Outline morphing with resampled polygons', 'Misregistration on twos'],
