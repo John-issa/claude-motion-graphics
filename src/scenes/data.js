@@ -809,6 +809,17 @@ export default defineScene({
   // Crisp hairlines and small type: film grain would read as noise here.
   post: { grain: 0 },
   uses: [], // setup reads only the reel timeline, never the title or seed
+  /** Sound on the scene's beats: each odometer column locking, then the timeline. */
+  cues({ reel }) {
+    const digits = String(reel.frames).length;
+    const lands = Array.from({ length: digits }, (_, col) => ({ t: T.roll + 1.05 + col * 0.18, kind: 'land', strength: 0.55 + 0.1 * col }));
+    return [
+      ...lands,
+      { t: T.gantt, kind: 'whoosh', dur: 1.0, strength: 0.45 },
+      { t: T.playhead + 0.12, kind: 'land', strength: 0.8 },
+      { t: T.sweep, kind: 'shimmer', strength: 0.7 },
+    ];
+  },
   setup({ reel }) {
     return buildLayout(reel);
   },

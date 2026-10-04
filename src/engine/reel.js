@@ -211,7 +211,7 @@ export function createReel({ scenes, params = {}, seed = 1, fps = 60 } = {}) {
     for (const e of entries) {
       if (typeof e.scene.cues !== 'function') continue;
       try {
-        const list = e.scene.cues({ params: currentParams, seed: currentSeed, state: e.state, dur: e.scene.duration }) || [];
+        const list = e.scene.cues({ params: currentParams, seed: currentSeed, state: e.state, dur: e.scene.duration, reel: meta }) || [];
         for (const c of list) {
           if (c && c.t >= 0 && c.t <= e.scene.duration) out.push({ ...c, t: e.start + c.t, scene: e.scene.id });
         }

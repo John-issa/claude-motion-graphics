@@ -555,6 +555,17 @@ export default defineScene({
   // accelerated canvas, so this bright, flat-shaded scene goes without.
   post: { grain: 0 },
 
+  uses: [],
+  /** Sound on the scene's beats (second source, splash, figure, sinkhole). */
+  cues: () => [
+    { t: 2.0, kind: 'hit', strength: 0.7 }, // the second source spikes
+    { t: 2.12, kind: 'shimmer', strength: 0.6 }, // its splash ring releases
+    { t: 4.0, kind: 'land', strength: 0.5 }, // the figure starts locking
+    { t: 4.4, kind: 'land', strength: 0.6 }, // the centre settles
+    { t: 4.95, kind: 'land', strength: 0.7 }, // the outer ring settles
+    { t: 5.0, kind: 'swell', dur: 0.36, strength: 0.6 }, // wind-up
+    { t: 5.6, kind: 'hit', strength: 0.8 }, // the sinkhole bottoms out under the iris
+  ],
   setup({ reel }) {
     // The collapse is scheduled against the next scene's transition window.
     const at = reel.scenes.findIndex((e) => e.id === 'geometry');

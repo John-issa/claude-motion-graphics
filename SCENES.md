@@ -20,7 +20,7 @@ export default defineScene({
   setup({ params, seed, W, H, gl, reel }) {
     return { /* precomputed, deterministic data */ };
   },
-  cues({ params, seed, state, dur }) {     // optional: sound cues on this scene's beats
+  cues({ params, seed, state, dur, reel }) { // optional: sound cues on this scene's beats
     return [{ t: 1.2, kind: 'hit' }, { t: 2.0, kind: 'land', strength: 0.6 }];
   },
   render(ctx, s) {

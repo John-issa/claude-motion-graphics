@@ -566,6 +566,19 @@ export default defineScene({
     'Analytic inter-reflections',
     'WebGL composited into the 2D frame',
   ],
+  uses: [],
+  /** Sound on the merge/split rhythm (times follow SPREAD and the plunge). */
+  cues: () => [
+    { t: 1.5, kind: 'land', strength: 0.5 }, // merge 1 gathers
+    { t: 1.65, kind: 'whoosh', dur: 0.6, strength: 0.4 }, // split 1 flings out
+    { t: 3.15, kind: 'hit', strength: 0.5 }, // merge 2: the drops snap in
+    { t: 3.3, kind: 'land', strength: 0.6 }, // gulp
+    { t: 3.4, kind: 'whoosh', dur: 0.5, strength: 0.5 }, // split 2, wider
+    { t: 4.45, kind: 'swell', dur: 0.5, strength: 0.6 }, // wind-up to the apex
+    { t: 4.95, kind: 'whoosh', dur: 0.5, dir: 'down', strength: 0.5 }, // the plunge
+    { t: 5.47, kind: 'hit', strength: 1.0 }, // everything lands in one sphere
+    { t: 5.9, kind: 'shimmer', strength: 0.7 }, // the key light leaves
+  ],
   setup({ gl }) {
     const state = { balls: new Float32Array(24), glOk: false };
     if (gl?.available) {
