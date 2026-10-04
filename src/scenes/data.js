@@ -54,7 +54,7 @@ const HEAD = 34; // module rule to label baseline
 
 // Beats, in local seconds. The scaffold (rules and labels) is already drawing
 // on as the push reveals it; the data follows it.
-const T = { rise: 0.1, roll: 0.8, stats: 1.45, caption: 1.8, bars: 1.6, gantt: 3.2, playhead: 3.95, sweep: 4.7, exit: 6.05 };
+const T = { rise: 0.1, roll: 0.8, stats: 1.45, caption: 1.8, bars: 1.6, gantt: 2.7, playhead: 3.45, sweep: 4.05, exit: 5.35 };
 
 // Motion vocabulary.
 const ARRIVE = 'outCubic'; // scaffold entering with the push: fast out, settled as it lands
@@ -418,8 +418,8 @@ function buildLayout(reel) {
   // The caption spans the figure's ink and sits a clear gap below its lowest
   // descender (the comma's tail), so figure and caption never touch.
   const heroInk = hero.inkRight - hero.ink;
-  const capSize = clamp((30 * heroInk) / measure(CAPTION, font(30, 'sans', 400), 0), 20, 30);
-  const capFont = font(capSize, 'sans', 400);
+  const capSize = clamp((30 * heroInk) / measure(CAPTION, font(30, 'mono', 400), 0), 20, 30);
+  const capFont = font(capSize, 'mono', 400);
   c.font = capFont;
   c.letterSpacing = '0px';
   const cm = c.measureText(CAPTION);
@@ -797,8 +797,8 @@ const ROWS = [[drawHero, drawBars], [drawStats], [drawGantt]];
 export default defineScene({
   id: 'data',
   title: 'Data Story',
-  duration: 7.0,
-  poster: 4.6,
+  duration: 6.3,
+  poster: 4.0,
   color: '#2446FF',
   transition: { type: 'push', duration: 0.7, dir: 'up' },
   notes: [

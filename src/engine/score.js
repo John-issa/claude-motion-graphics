@@ -38,6 +38,14 @@ export function buildScore(meta, { seed = 1, cues = [] } = {}) {
   };
   const scenes = meta.scenes;
 
+  // Kick beds share one 120 BPM grid anchored on the first bed, so the pulse
+  // carries straight across cuts instead of restarting out of phase.
+  const BEAT = 0.5;
+  const bedIds = new Set(['data', 'geometry']);
+  const firstBed = scenes.find((s) => bedIds.has(s.id));
+  const anchor = firstBed ? firstBed.start + Math.max(0, (scenes[firstBed.index - 1]?.end ?? firstBed.start) - firstBed.start) : 0;
+  const onBeat = (t) => anchor + Math.ceil((t - anchor) / BEAT - 1e-6) * BEAT;
+
   scenes.forEach((sc, i) => {
     const prev = scenes[i - 1];
     const next = scenes[i + 1];
@@ -61,7 +69,10 @@ export function buildScore(meta, { seed = 1, cues = [] } = {}) {
       const cut = sc.start + overlapIn * 0.5;
       const lead = Math.max(0.35, overlapIn * 0.5 + 0.25);
       add({ t: cut - lead, type: 'whoosh', dur: lead, f0: 260, f1: 5200, gain: 0.2, pan: i % 2 ? 0.35 : -0.35, send: 0.3 });
-      if (sc.transition !== 'fade') add({ t: cut, type: 'impact', gain: 0.32, send: 0.25 });
+      // Skip the impact when the outgoing scene has just landed its own hit:
+      // two equal thumps half a second apart read as a stumble.
+      const ownHit = cues.some((c) => c.kind === 'hit' && c.scene === prev.id && c.t > cut - 0.6 && c.t <= cut + 0.1);
+      if (sc.transition !== 'fade' && !ownHit) add({ t: cut, type: 'impact', gain: 0.32, send: 0.25 });
     }
 
     // Per-scene texture.
@@ -85,11 +96,11 @@ export function buildScore(meta, { seed = 1, cues = [] } = {}) {
           t += gap;
           gap *= 1.08;
         }
-        for (let b = t0; b < t1 - 0.3; b += 0.5) add({ t: b, type: 'kick', gain: 0.16 });
+        for (let b = onBeat(t0); b < t1 - 0.3; b += BEAT) add({ t: b, type: 'kick', gain: 0.16 });
         break;
       }
       case 'geometry':
-        for (let b = t0; b < t1 - 0.3; b += 0.5) add({ t: b, type: 'kick', gain: 0.2 });
+        for (let b = onBeat(t0); b < t1 - 0.3; b += BEAT) add({ t: b, type: 'kick', gain: 0.2 });
         break;
       case 'shader':
         add({ t: t0, type: 'sub', note: chord[0] - 12, dur: Math.max(1, t1 - t0 - 1), attack: 1.6, release: 1.4, gain: 0.07 });

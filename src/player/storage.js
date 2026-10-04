@@ -1,4 +1,4 @@
-// Per-viewer preferences (title, seed, quality, grain) in localStorage.
+// Per-viewer preferences (title, seed, quality) in localStorage.
 // Storage can be missing or throw (private windows, sandboxed frames), so every
 // access is guarded and the player works the same without it.
 

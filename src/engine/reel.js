@@ -277,9 +277,11 @@ export function createReel({ scenes, params = {}, seed = 1, fps = 60 } = {}) {
       ctx.save();
       e.scene.render(ctx, s);
       ctx.restore();
-      drawSlug(ctx, s, e.scene, entries.length);
+      // Vignette under the slug, so the chapter slug reads at the same
+      // brightness in every scene; grain goes over everything.
       const post = e.scene.post || {};
       if (post.vignette) vignette(ctx, post.vignette, W, H);
+      drawSlug(ctx, s, e.scene, entries.length);
       const g = post.grain ?? DEFAULT_GRAIN;
       if (grainOn && g > 0) grain(ctx, frame, g, W, H);
     } catch (err) {
@@ -389,7 +391,7 @@ export function createReel({ scenes, params = {}, seed = 1, fps = 60 } = {}) {
             const q = easeFn(clamp01((p - d) / 0.55));
             if (q <= 0 || q >= 1) continue;
             const edge = i * size + size * q;
-            const w = 14 * (1 - q) + 2;
+            const w = (tr.band ?? 14) * (1 - q) + 2;
             if (horizontal) c.fillRect(0, edge, W, w);
             else c.fillRect(edge, 0, w, H);
           }

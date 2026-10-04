@@ -317,7 +317,10 @@ function drawRules(ctx, L, t) {
   ctx.fillStyle = BONE;
   L.rows.forEach((row, i) => {
     const late = (L.rows.length - 1 - i) * 0.08; // upper rules follow the axis rule
-    const w = half * ease.outExpo(seg(t, 0.03 + late, 0.76 + late));
+    // The axis rule starts on frame 0 as the point the end card closes on (a
+    // match cut across the loop) and stretches out from it.
+    const point = i === L.rows.length - 1 ? 2.5 * (1 - collapse(t)) : 0;
+    const w = Math.max(point, half * ease.outExpo(seg(t, late, 0.73 + late)));
     if (w > 0) ctx.fillRect(L.cx - w, ruleY(L, row, t) - 1, w * 2, 2);
   });
 }

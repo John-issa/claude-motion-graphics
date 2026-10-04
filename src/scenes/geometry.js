@@ -542,7 +542,7 @@ export default defineScene({
   id: 'geometry',
   title: 'Wave Field',
   duration: DURATION,
-  poster: 4.6,
+  poster: 3.3,
   color: '#2EE6A8',
   transition: { type: 'wipe', duration: 0.7, color: '#2EE6A8', angle: -14 },
   notes: [

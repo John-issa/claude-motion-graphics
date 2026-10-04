@@ -116,8 +116,6 @@ export function createPlayer({ reel, target = 'dev', prefs = {} }) {
     titleReset: $('title-reset'),
     seedOut: $('seed-out'),
     seedShuffle: $('seed-shuffle'),
-    grain: $('grain-toggle'),
-    grainText: document.querySelector('#grain-toggle .switch-text'),
     perf: $('perf'),
     exportRow: $('export-row'),
     exportNote: $('export-note'),
@@ -153,7 +151,6 @@ export function createPlayer({ reel, target = 'dev', prefs = {} }) {
     blur: false,
     guides: false,
     quality: QUALITIES.includes(prefs.quality) ? prefs.quality : 'auto',
-    grain: prefs.grain !== false,
     ready: false,
     inspecting: false,
     scrubbing: false,
@@ -205,8 +202,6 @@ export function createPlayer({ reel, target = 'dev', prefs = {} }) {
     el.titleReset.title = `Back to ${DEFAULT_TITLE}`;
     showSeed();
     for (const input of qualityInputs) input.checked = input.value === state.quality;
-    reel.setGrain(state.grain);
-    reflectGrain();
     if (window.matchMedia && window.matchMedia('(min-width: 1000px) and (hover: hover)').matches) el.keys.open = true;
   }
 
@@ -610,11 +605,6 @@ export function createPlayer({ reel, target = 'dev', prefs = {} }) {
     for (const input of speedInputs) input.checked = Number(input.value) === state.speed;
   }
 
-  function reflectGrain() {
-    el.grain.setAttribute('aria-checked', String(state.grain));
-    el.grainText.textContent = state.grain ? 'On' : 'Off';
-  }
-
   // ---------- Transport ----------
 
   function play() {
@@ -815,14 +805,6 @@ export function createPlayer({ reel, target = 'dev', prefs = {} }) {
     });
   }
 
-  el.grain.addEventListener('click', () => {
-    state.grain = !state.grain;
-    reel.setGrain(state.grain);
-    reflectGrain();
-    savePrefs({ grain: state.grain });
-    dirty = true;
-    request();
-  });
 
   // ---------- Export ----------
 
@@ -888,7 +870,6 @@ export function createPlayer({ reel, target = 'dev', prefs = {} }) {
     el.titleInput,
     el.titleReset,
     el.seedShuffle,
-    el.grain,
     el.upNext,
     ...speedInputs,
     ...qualityInputs,

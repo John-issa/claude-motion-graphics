@@ -53,8 +53,8 @@ const MARKS_IN = CLOCK_OUT + 0.02; // the overshoot callouts sweep in one after 
 const MARKS_EACH = 0.05;
 const MARKS_DUR = 0.45; // ...and all hold complete for 0.25 s before the exit
 const PING_DUR = 0.55; // the ring each dot sends out when the clock stops
-const EXIT = 4.72; // the header lifts out first
-const RULE_OFF = 5.1; // the rule under it draws off once the top row has filed in
+const EXIT = 5.12; // the header lifts out first (late enough that cards are still leaving as the blinds sweep in)
+const RULE_OFF = 5.5; // the rule under it draws off once the top row has filed in
 
 // The exit, per row. The top row rises into the header rule and is cut off
 // there, clear of the chapter slug; then the bottom row drops out of frame.
@@ -63,8 +63,8 @@ const RULE_OFF = 5.1; // the rule under it draws off once the top row has filed 
 // top row has just left, before the card whips away. The in-out curves are
 // symmetric, so reversing them changes nothing.
 const EXITS = [
-  { at: 4.78, each: 0.06, dur: 0.6, dist: -480 },
-  { at: 4.86, each: 0.05, dur: 0.66, dist: 640 },
+  { at: 5.18, each: 0.06, dur: 0.6, dist: -480 },
+  { at: 5.26, each: 0.05, dur: 0.66, dist: 640 },
 ];
 
 // Sheet layout: 4 × 2 cards inside title-safe. The 400 × 360 pitch is a
@@ -900,7 +900,7 @@ export default defineScene({
   id: 'easing-study',
   title: 'Easing Study',
   duration: 6.5,
-  poster: 3.8,
+  poster: 4.55,
   color: '#FFD23F',
   transition: { type: 'wipe', duration: 0.7, color: '#FFD23F' },
   slug: { color: '#0B0C10' },
@@ -918,7 +918,7 @@ export default defineScene({
   /** Sound: cards popping in, the shared clock ticking, every dot pinging as it stops. */
   cues() {
     const ticks = [];
-    for (let t = CLOCK_IN; t < CLOCK_OUT - 1e-6; t += 0.25) ticks.push({ t, kind: 'tick', strength: 0.9 });
+    for (let i = 0; i < TICKS; i += 2) ticks.push({ t: CLOCK_IN + (i / TICKS) * CLOCK_DUR, kind: 'tick', strength: i % 4 === 0 ? 1.0 : 0.7 });
     return [
       { t: CARDS_IN, kind: 'land', strength: 0.5 }, // top row pops in
       { t: CARDS_IN + 0.08, kind: 'land', strength: 0.5 }, // bottom row

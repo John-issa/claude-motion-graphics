@@ -480,8 +480,9 @@ export default defineScene({
       let r = R * appear * breathe * hit;
       let rot = (1 - SPIN(dt)) * (i < 2 ? -1 : 1) * (Math.PI / 2); // mirrored quarter turns
       if (i === 3) {
-        // The survivor: a last breath in, then a turn down to a point.
-        r *= kf(t, [[5.03, 1], [5.11, 1.4, 'outCubic'], [5.25, 0, 'inCubic']]);
+        // The survivor: a last breath in, then a turn down to a point that
+        // holds to the last frame, where the title's hairline starts (match cut).
+        r *= kf(t, [[5.03, 1], [5.11, 1.4, 'outCubic'], [5.25, 0.15, 'inCubic']]);
         rot += ease.inCubic(seg(t, 5.05, 5.25)) * (Math.PI / 2);
       }
       ctx.fillStyle = P.color;

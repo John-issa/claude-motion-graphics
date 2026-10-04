@@ -119,7 +119,7 @@ export default defineScene({
   duration: 6.0,
   poster: 4.1,
   color: '#FF48B0',
-  transition: { type: 'blinds', duration: 0.8, color: '#FF48B0' },
+  transition: { type: 'blinds', duration: 0.8, color: '#FF48B0', band: 48 },
   notes: ['Multiply overprint', 'Procedural halftone', 'Outline morphing with resampled polygons', 'Misregistration on twos'],
   post: { grain: 0 }, // the print carries its own paper and ink texture; film grain would read as a filter
   slug: { color: '#0B0C10' },
