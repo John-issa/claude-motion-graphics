@@ -20,6 +20,7 @@ import {
   smoothstep,
   makeCanvas,
   linearGradient,
+  layoutGlyphs,
 } from '../engine/index.js';
 
 // Navy ground and bone type. Sun marks this scene, mint marks transitions and
@@ -372,15 +373,26 @@ function hline(ctx, x0, x1, y, pIn, pOut, color, w = 1.5) {
   ctx.fillRect(a, y - w / 2, b - a, w);
 }
 
+// Canvas letterSpacing is missing in older Safari; there, tracked labels are
+// set glyph by glyph with the engine's kerning-aware layout instead.
+const NATIVE_TRACKING = typeof CanvasRenderingContext2D !== 'undefined' && 'letterSpacing' in CanvasRenderingContext2D.prototype;
+
 /** A line of tracked text. Right and centre alignment compensate for the trailing tracking. */
 function label(ctx, str, x, y, { f = F.label, color = BONE, alpha = 1, align = 'left', track = TRACK } = {}) {
   if (alpha <= 0.004) return;
   ctx.font = f;
-  ctx.letterSpacing = `${track}px`;
-  ctx.textAlign = align;
   ctx.globalAlpha = alpha;
   ctx.fillStyle = color;
-  ctx.fillText(str, x + (align === 'right' ? track : align === 'center' ? track / 2 : 0), y);
+  if (NATIVE_TRACKING || !track) {
+    ctx.letterSpacing = `${track}px`;
+    ctx.textAlign = align;
+    ctx.fillText(str, x + (align === 'right' ? track : align === 'center' ? track / 2 : 0), y);
+    return;
+  }
+  const L = layoutGlyphs(ctx, str, f, track);
+  const x0 = align === 'right' ? x - L.width : align === 'center' ? x - L.width / 2 : x;
+  ctx.textAlign = 'left';
+  for (const g of L.glyphs) ctx.fillText(g.ch, x0 + g.x, y);
 }
 
 /** In/out envelope for a label: fade and rise in, fade and drift right out. */
@@ -394,6 +406,9 @@ function envelope(t, tIn, tOut, dIn = 0.55, dOut = 0.32) {
 function buildLayout(reel) {
   const c = makeCanvas(8, 8).getContext('2d');
   const measure = (text, f, track = TRACK) => {
+    // Measure the way label() will draw: native tracking where the canvas
+    // supports it, otherwise the per-glyph layout used as a fallback.
+    if (!NATIVE_TRACKING) return layoutGlyphs(c, text, f, track).width;
     c.font = f;
     c.letterSpacing = `${track}px`;
     return c.measureText(text).width - track;
