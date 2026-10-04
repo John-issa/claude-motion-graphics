@@ -10,10 +10,11 @@ import { DEFAULT_PARAMS } from '../engine/index.js';
 
 const DEFAULT_TITLE = DEFAULT_PARAMS.title;
 const TITLE_MAX = 24;
-// A title change re-runs every scene's setup, which stalls a frame or two.
-// While the reel plays, wait for a longer pause in typing before applying it.
+// A title change re-runs every scene's setup (about 0.1 s), which stalls
+// playback. While the reel plays, wait for a longer pause in typing before
+// applying it; Enter or leaving the field applies it at once.
 const TITLE_DEBOUNCE_MS = 200;
-const TITLE_DEBOUNCE_PLAYING_MS = 500;
+const TITLE_DEBOUNCE_PLAYING_MS = 600;
 const BLUR_SAMPLES = 6;
 const MAX_BACKING_W = 1920;
 const AUTO_SCALES = [1, 0.75, 0.5];
@@ -469,10 +470,7 @@ export function createPlayer({ reel, target = 'dev', prefs = {} }) {
     updateUpNext(i, t);
     // While playing, refresh the slider's spoken value once a second only.
     const sec = Math.floor(t);
-    if (!state.playing || sec !== ui.ariaSec) {
-      ui.ariaSec = sec;
-      timeline.setValue(t, `${timecode(f, fps)}, scene ${i + 1} of ${scenes.length}, ${s.title}`);
-    }
+    if (!state.playing || sec !== ui.ariaSec) syncSlider();
     if (rec) {
       el.recBar.style.setProperty('--p', Math.min(1, t / duration).toFixed(4));
       if (sec !== ui.recSec) {
@@ -480,6 +478,19 @@ export function createPlayer({ reel, target = 'dev', prefs = {} }) {
         el.recBadgeTime.textContent = `${mmss(t)} / ${mmss(duration)}`;
       }
     }
+  }
+
+  /**
+   * The slider's value and spoken text. Seeks and steps set it at once rather
+   * than on the next drawn frame, which can be slow with motion blur on, so a
+   * screen reader announces the new position, not the old one.
+   */
+  function syncSlider() {
+    const t = state.t;
+    const f = frameAt(t, fps, frames);
+    const i = reel.sceneAt(t).index;
+    ui.ariaSec = Math.floor(t);
+    timeline.setValue(t, `${timecode(f, fps)}, scene ${i + 1} of ${scenes.length}, ${scenes[i].title}`);
   }
 
   function showScene(i) {
@@ -579,6 +590,7 @@ export function createPlayer({ reel, target = 'dev', prefs = {} }) {
     state.inspecting = inspect;
     // Settle on the frame being shown so the timecode matches the picture.
     state.t = frameAt(state.t, fps, frames) / fps;
+    syncSlider();
     dirty = true;
     reflect();
     request();
@@ -596,6 +608,7 @@ export function createPlayer({ reel, target = 'dev', prefs = {} }) {
       state.inspecting = true;
     }
     state.t = v;
+    syncSlider();
     dirty = true;
     reflect();
     request();
@@ -608,6 +621,7 @@ export function createPlayer({ reel, target = 'dev', prefs = {} }) {
     pause({ inspect: true });
     const f = Math.max(0, Math.min(frames - 1, frameAt(state.t, fps, frames) + n));
     state.t = f / fps;
+    syncSlider();
     dirty = true;
     reflect();
     request();

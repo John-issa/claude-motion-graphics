@@ -196,45 +196,60 @@ vec3 film(float x) {
   return vec3(0.6, 0.5, 0.9) + vec3(0.4, 0.25, 0.12) * cos(6.2831853 * (x + vec3(0.0, 0.3, 0.6)));
 }
 
-// Chrome seen in chrome: a neighbour's surface, one bounce deeper (and
-// blurrier: its own curvature fans the cone out again).
-vec3 mirrored(vec3 r, vec3 n, float blur) {
+// Chrome seen in chrome: a neighbour's surface at distance t, one bounce
+// deeper. Across one texel the reflected beam sweeps over the neighbour by
+// grow = foot + 2·cone·t (its origin steps a footprint, its direction 2·cone),
+// and the neighbour's curvature turns that into a sweep of directions,
+// unbounded toward its rim. The lookup is prefiltered by half that sweep;
+// where it outgrows what a blurred lookup can stand for, the image gives way
+// to the surrounding reflection (base), which is what a mirror's rim reflects
+// anyway: no sparkling ring, and small or distant neighbours become soft
+// tinted spots rather than noise.
+vec3 mirrored(vec3 r, vec3 n, float rad, float grow, float cone, vec3 base) {
   float ndv = clamp(-dot(n, r), 0.0, 1.0);
-  return env(reflect(r, n), 3.0 * blur) * film(uFilm + 0.9 * (1.0 - ndv)) * 0.85;
+  float blur = cone + grow / (rad * max(ndv, 0.02));
+  vec3 img = mix(env(reflect(r, n), min(blur, 0.35)), base, smoothstep(0.12, 0.4, blur));
+  // The film is keyed by ndv² (linear in the ray's offset from the centre):
+  // ndv itself has a square-root edge that would cycle the palette inside a
+  // texel and fringe the disc.
+  return img * film(uFilm + 0.9 * (1.0 - ndv * ndv)) * 0.85;
 }
 
 // The environment along a reflected ray, with the other blobs mirrored in it
 // as analytic spheres: cheap inter-reflection. Rather than a hard hit test,
-// each neighbour gets a soft edge from the ray's closest approach, as wide as
-// the reflected pixel cone there (cone: its half-angle). A neighbour fades out
-// where the surface blends into it, or where a neck bridges it to the blob
-// we sit on (own; the neck would block the view), so necks mirror the studio
-// instead of a sphere at point-blank range. The two nearest are composited
-// back to front.
-vec3 reflection(vec3 p, vec3 r, vec4 own, float cone, float blur) {
-  float t1 = 1e4, t2 = 1e4, w1 = 0.0, w2 = 0.0;
+// each neighbour gets a soft edge from the ray's closest approach, one texel's
+// sweep wide either side. A neighbour fades out where the surface blends into
+// it, where a neck bridges it to the blob we sit on (own; the neck would block
+// the view), or where our own surface is no longer that blob's sphere (sph < 1:
+// a neck or bulge whose curvature the cone doesn't know), so necks mirror the
+// studio instead of a sphere at point-blank range. The two nearest are
+// composited back to front.
+vec3 reflection(vec3 p, vec3 r, vec4 own, float sph, float foot, float cone, float blur) {
+  float t1 = 1e4, t2 = 1e4, w1 = 0.0, w2 = 0.0, r1 = 1.0, r2 = 1.0;
   vec3 n1 = vec3(0.0), n2 = vec3(0.0);
+  float shape = smoothstep(0.8, 0.96, sph);
   for (int i = 0; i < 6; i++) {
     vec3 oc = p - uBall[i].xyz;
     float rad = uBall[i].w;
     float b = dot(oc, r);
     float dd = max(dot(oc, oc) - b * b, 0.0);   // squared distance from the centre to the ray
     float e = sqrt(dd) - rad;                   // ray to surface; negative where it pierces
-    float soft = 0.005 - cone * b;
+    float soft = foot - 2.0 * cone * b;         // one texel's sweep at the neighbour
     if (b >= 0.0 || e >= soft) continue;        // behind the ray, or clear of it
     float gap = length(oc) - rad;
     float bridge = length(own.xyz - uBall[i].xyz) - own.w - rad;
-    float w = (1.0 - smoothstep(-soft, soft, e))
+    float w = (1.0 - smoothstep(-soft, soft, e)) * shape
             * smoothstep(0.15 * uK, 0.9 * uK, gap) * smoothstep(0.1 * uK, 0.6 * uK, bridge);
     if (w <= 0.0) continue;                     // includes the blob we sit on
     float t = -b - sqrt(max(rad * rad - dd, 0.0)); // entry point, or closest approach on a miss
     vec3 n = normalize(oc + r * t);
-    if (t < t1) { t2 = t1; w2 = w1; n2 = n1; t1 = t; w1 = w; n1 = n; }
-    else if (t < t2) { t2 = t; w2 = w; n2 = n; }
+    if (t < t1) { t2 = t1; w2 = w1; n2 = n1; r2 = r1; t1 = t; w1 = w; n1 = n; r1 = rad; }
+    else if (t < t2) { t2 = t; w2 = w; n2 = n; r2 = rad; }
   }
-  vec3 col = env(r, blur);
-  if (w2 > 0.0) col = mix(col, mirrored(r, n2, blur), w2);
-  if (w1 > 0.0) col = mix(col, mirrored(r, n1, blur), w1);
+  vec3 base = env(r, blur);
+  vec3 col = base;
+  if (w2 > 0.0) col = mix(col, mirrored(r, n2, r2, foot + 2.0 * cone * t2, cone, base), w2);
+  if (w1 > 0.0) col = mix(col, mirrored(r, n1, r1, foot + 2.0 * cone * t1, cone, base), w1);
   return col;
 }
 
@@ -264,7 +279,8 @@ vec3 shade(vec3 p, vec3 rd, float foot) {
   // instead of flickering.
   float cone = foot / (own.w * max(ndv, 0.05));
   float blur = min(cone - foot / own.w, 0.3);
-  vec3 col = reflection(p + n * 0.01, r, own, cone, blur) * metal * mix(0.25, 1.0, ao);
+  float sph = dot(n, normalize(p - own.xyz));
+  vec3 col = reflection(p + n * 0.01, r, own, sph, foot, cone, blur) * metal * mix(0.25, 1.0, ao);
   col += vec3(1.0, 0.98, 0.95) * 6.0 * uLights.x * pow(max(dot(r, ${glsl3(SUN)}), 0.0), 900.0) * ao;
   // Soft iridescent rim, strongest on the strip light's side.
   float side = clamp(dot(n, ${glsl3(RIM[0])}) * 0.5 + 0.5, 0.0, 1.0);

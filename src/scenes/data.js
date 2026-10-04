@@ -14,6 +14,7 @@ import {
   mix,
   mixRGB,
   toHex,
+  clamp,
   clamp01,
   lerp,
   smoothstep,
@@ -32,30 +33,32 @@ const MUTED = toHex(mixRGB(NAVY, BONE, 0.3));
 const RULE = rgba(BONE, 0.36);
 const GRID = rgba(BONE, 0.08);
 
+// One mono size carries every label, tick and legend; the playhead's readout
+// is the only larger mono line. The hero is fitted to its column in setup.
+const HERO_SIZE = 250;
 const F = {
-  hero: font(250, 'serif', 300),
   stat: font(84, 'serif', 350),
-  label: font(15, 'mono', 500),
-  small: font(13, 'mono', 500),
+  label: font(16, 'mono', 500),
+  flag: font(18, 'mono', 500),
 };
 const TRACK = 2; // mono tracking, design px
-// Martian Mono caps are 0.8 em tall; used to centre labels on bars and clips.
-const LABEL_CAP = 12;
-const SMALL_CAP = 10.4;
 const CAPTION = 'frames, each computed on demand, none stored';
 
 // Grid in design px. Title-safe is x 192-1728, y 108-972; the chapter slug
-// owns the top-left corner, so every module starts below y 200.
-const HERO = { x0: 192, x1: 848, rule: 204, base: 480, statsRule: 612, statsBase: 733 };
+// owns the top-left corner, so every module starts below y 200. The hero
+// hangs from `cap`, the line its tallest digit reaches.
+const HERO = { x0: 192, x1: 848, rule: 204, cap: 298, statsRule: 612, statsBase: 733 };
 const BARS = { x0: 968, x1: 1728, rule: 204, top: 270, bottom: 700, h: 16 };
-const GANTT = { x0: 192, x1: 1728, rule: 792, lane0: 848, lane1: 876, laneH: 20, axis: 910 };
+const GANTT = { x0: 192, x1: 1728, rule: 792, lane0: 850, lane1: 882, laneH: 24, axis: 918 };
 const HEAD = 34; // module rule to label baseline
 
-// Beats, in local seconds.
-const T = { rules: 0.12, roll: 0.8, stats: 1.45, caption: 1.8, bars: 1.6, gantt: 3.2, playhead: 3.95, sweep: 4.7, exit: 6.05 };
+// Beats, in local seconds. The scaffold (rules and labels) arrives with the
+// push from t = 0; the data follows it.
+const T = { rise: 0.1, roll: 0.8, stats: 1.45, caption: 1.8, bars: 1.6, gantt: 3.2, playhead: 3.95, sweep: 4.7, exit: 6.05 };
 
 // Motion vocabulary.
-const DRAW = [0.45, 0, 0.15, 1]; // rules and axes: soft start, long glide
+const ARRIVE = 'outCubic'; // scaffold entering with the push: fast out, settled as it lands
+const DRAW = [0.45, 0, 0.15, 1]; // axes, and every retraction: soft start, long glide
 const GROW = [0.16, 0.84, 0.3, 1]; // bars: fast out, long settle
 const ROLL = [0.35, 0.05, 0.25, 1]; // odometer: spin up, glide into the detent
 const SETTLE_IN = [0.3, 0, 0.2, 1]; // content drifting into place behind the push
@@ -68,6 +71,17 @@ const DIGITS = '0123456789';
 
 /** 2766 → "2,766" */
 const group = (n) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+
+/** The playhead's readout, padded so a mono line never changes length. */
+const flagText = (now, frame, tw, fw) => `${now.toFixed(1).padStart(tw)} S · FRAME ${group(frame).padStart(fw)}`;
+
+/** A tick step of 1, 2 or 5 × 10^k that cuts [0, max] into about `target` intervals. */
+function niceStep(max, target) {
+  const p = 10 ** Math.floor(Math.log10(max / target));
+  let best = p;
+  for (const k of [2, 5, 10]) if (Math.abs(max / (k * p) - target) < Math.abs(max / best - target)) best = k * p;
+  return best;
+}
 
 /**
  * When an element at (x, y) starts to leave: a diagonal wave from the top-left
@@ -111,29 +125,42 @@ function glint(ctx, x0, y, x1, h, u) {
  * as wide as the widest digit, so a rolling column never nudges its
  * neighbours. Separators keep their own advance. `ink` and `inkRight` locate
  * the settled figure's ink, used to hang it optically on the margin.
+ *
+ * The odometer window is cut just outside the tallest digit (`top` above the
+ * baseline, `bot` below) and softened by a short fade beyond that, so nothing
+ * at rest is ever faded. The strip's pitch is a third longer than the window:
+ * a column shows one digit at rest and two partial ones mid-roll, never more.
  */
 function figure(c, text, fontStr) {
   c.font = fontStr;
   c.letterSpacing = '0px';
   c.textAlign = 'center';
   let cell = 0;
-  let desc = 0;
+  let top = 0;
+  let bot = 0;
   for (const d of DIGITS) {
     const m = c.measureText(d);
     cell = Math.max(cell, m.width);
-    desc = Math.max(desc, m.actualBoundingBoxDescent);
+    top = Math.max(top, m.actualBoundingBoxAscent);
+    bot = Math.max(bot, m.actualBoundingBoxDescent);
   }
   const cells = [];
   let x = 0;
   let cols = 0;
+  let sepBot = 0;
   for (const ch of text) {
     const digit = DIGITS.indexOf(ch);
-    const w = digit >= 0 ? cell : c.measureText(ch).width;
+    const m = c.measureText(ch);
+    if (digit < 0) sepBot = Math.max(sepBot, m.actualBoundingBoxDescent);
+    const w = digit >= 0 ? cell : m.width;
     cells.push({ ch, digit, col: digit >= 0 ? cols++ : -1, cx: x + w / 2 });
     x += w;
   }
   const last = cells[cells.length - 1];
-  const capH = c.measureText('0').actualBoundingBoxAscent;
+  const fade = Math.max(8, top * 0.075);
+  const clear = top * 0.01;
+  const winTop = top + clear + fade;
+  const winBot = Math.max(0, bot) + clear + fade;
   return {
     font: fontStr,
     cells,
@@ -142,41 +169,36 @@ function figure(c, text, fontStr) {
     width: x,
     ink: cells[0].cx - c.measureText(text[0]).actualBoundingBoxLeft,
     inkRight: last.cx + c.measureText(last.ch).actualBoundingBoxRight,
-    capH,
-    desc: Math.max(0, desc),
-    pitch: capH * 1.5, // distance between digits on a strip
-    fade: capH * 0.26, // soft edges of the odometer window
+    top,
+    bot: Math.max(0, bot),
+    sepBot,
+    fade,
+    winTop,
+    winBot,
+    pitch: 1.35 * (winTop + winBot), // distance between digits on a strip
   };
 }
 
-/** How far (in cells) a column has rolled on past its digit to exit, after a small anticipating dip. */
-const exitRoll = (t, c) => kf(t, [[c.tOut, 0], [c.tOut + 0.42, 1, 'inBack']]);
+/** How far (in cells) a column has rolled on past its digit to exit: straight up, accelerating. */
+const exitRoll = (t, c) => eseg(t, c.tOut, c.tOut + 0.42, 'inCubic');
 
 /**
- * Where a digit column's strip sits at time t. Strip index k shows digit k for
- * 0 ≤ k ≤ digit and is blank elsewhere. The column rises from blank (index
- * -1) to 0, waits a beat, scrolls up to its digit, overshoots slightly and
- * settles, then rolls on into blank to exit.
+ * Where a digit column's strip sits at time t. Strip index k shows digit
+ * k mod 10 for 0 ≤ k ≤ target and is blank elsewhere, so a column given extra
+ * turns spins through whole revolutions before landing. The column rises from
+ * blank (index -1) to 0, waits a beat, scrolls up to its target, overshoots
+ * slightly and settles, then rolls on into blank to exit.
  */
-function stripPos(t, digit, c) {
+function stripPos(t, target, c) {
   const count = kf(t, [
     [c.tRise, -1],
     [c.tRise + RISE, 0, 'outCubic'],
     [c.tIn, 0],
-    [c.tLand, digit + OVERSHOOT, ROLL],
-    [c.tLand + SETTLE, digit, 'inOutSine'],
+    [c.tLand, target + (target > 0 ? OVERSHOOT : 0), ROLL],
+    [c.tLand + SETTLE, target, 'inOutSine'],
   ]);
   return count + exitRoll(t, c);
 }
-
-/**
- * Vertical extent of a digit column's window around baseline y: clear a
- * little beyond a settled digit, then fading out over `fade`.
- */
-const windowOf = (fig, y) => ({
-  top: y - fig.capH * 1.04 - fig.fade,
-  bottom: y + fig.desc + fig.capH * 0.02 + fig.fade,
-});
 
 /** Stops for a smoothstep ramp from `color` (opaque) to transparent. */
 function rampStops(color) {
@@ -193,91 +215,119 @@ const GROUND_RAMP = rampStops(NAVY);
  * The digits of one strip around position `pos`, centred on cx. Digits whose
  * offset from the baseline (in cells) falls outside [lo, hi] would land
  * wholly outside the window, so they are skipped rather than clipped.
+ * Returns whether anything was drawn.
  */
-function drawDigits(g, cx, y, pos, digit, pitch, lo = -1, hi = 1) {
+function drawDigits(g, cx, y, pos, target, pitch, lo, hi) {
   const k0 = Math.floor(pos);
+  let drawn = false;
   for (let k = k0; k <= k0 + 1; k++) {
     const o = k - pos;
-    if (k >= 0 && k <= digit && o > lo && o < hi) g.fillText(DIGITS[k], cx, y + o * pitch);
+    if (k >= 0 && k <= target && o > lo && o < hi) {
+      g.fillText(DIGITS[k % 10], cx, y + o * pitch);
+      drawn = true;
+    }
   }
+  return drawn;
 }
 
 /**
- * Draw a figure as an odometer. `timing(col)` gives each digit column its
- * { tRise, tIn, tLand, tOut }.
+ * Draw a figure as an odometer. `timing(cell)` gives each digit column its
+ * { tRise, tIn, tLand, tOut, turns }.
  *
  * While anything moves, digits are clipped to the window and its top and
- * bottom edges are softened by ground-coloured ramps drawn over them, so
- * digits dissolve as they roll through (much cheaper than gradient-filled
- * glyphs). A column's smear is its strip travel across a half-frame shutter
- * centred on t: still columns draw one crisp glyph, moving ones add copies
- * spread along the smear, which reads as vertical motion blur.
+ * bottom edges are softened by ground-coloured ramps drawn over the columns
+ * that reach them, so digits dissolve as they roll through (much cheaper than
+ * gradient-filled glyphs). A column's smear is its strip travel across a
+ * half-frame shutter centred on t: a still column draws one crisp glyph, a
+ * moving one adds copies spread along the smear no more than 3 physical px
+ * apart, which reads as vertical motion blur rather than ghosts. The copy cap
+ * is tied to the output size so the 1280 budget path stays lean, and a
+ * spinning column dims a little, as a real smear spreads its ink.
  *
  * Separators ride their column's rise and exit (not its count), fading with
  * distance. They draw above the ramps, so a comma's tail is never masked.
  */
 function drawFigure(ctx, s, fig, x, y, color, timing) {
-  const half = SHUTTER / 120;
+  const half = SHUTTER / (2 * s.fps);
+  const maxCopies = s.px > 0.75 ? 40 : 14;
   const cols = [];
   const seps = [];
   let off = 0;
-  let moving = false;
+  let still = true;
   for (const cell of fig.cells) {
     if (cell.digit < 0) {
       seps.push({ cell, off });
       continue;
     }
-    const c = timing(cell.col);
-    const d = cell.digit;
-    const pos = stripPos(s.t, d, c);
+    const c = timing(cell);
+    const target = cell.digit + 10 * (c.turns || 0);
+    const pos = stripPos(s.t, target, c);
     const ex = exitRoll(s.t, c);
     off = Math.min(0, pos - ex) + ex; // rise below the baseline, or exit above it
-    const col = { cell, d, pos, p0: stripPos(s.t - half, d, c), p1: stripPos(s.t + half, d, c) };
-    moving ||= col.pos !== d || col.p0 !== d || col.p1 !== d;
-    cols.push(col);
+    const p0 = stripPos(s.t - half, target, c);
+    const p1 = stripPos(s.t + half, target, c);
+    const rest = pos === target && p0 === target && p1 === target;
+    still &&= rest;
+    cols.push({ cell, target, pos, p0, p1, rest });
   }
-  const win = windowOf(fig, y);
-  const left = x - fig.cell;
-  const width = fig.width + 2 * fig.cell;
+  const top = y - fig.winTop;
+  const bottom = y + fig.winBot;
   // Offsets (in cells) beyond which a digit is wholly outside the window.
-  const lo = (win.top - y - fig.desc) / fig.pitch;
-  const hi = (win.bottom - y + fig.capH) / fig.pitch;
+  const lo = -(fig.winTop + fig.bot) / fig.pitch;
+  const hi = (fig.winBot + fig.top) / fig.pitch;
   ctx.save();
   ctx.font = fig.font;
   ctx.letterSpacing = '0px';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'alphabetic';
   ctx.fillStyle = color;
-  if (moving) {
+  if (!still) {
     ctx.beginPath();
-    ctx.rect(left, win.top, width, win.bottom - win.top);
+    ctx.rect(x - fig.cell, top, fig.width + 2 * fig.cell, bottom - top);
     ctx.clip();
   }
+  // The span of columns whose digits may reach the window's soft edges.
+  let r0 = Infinity;
+  let r1 = -Infinity;
   for (const it of cols) {
     const cx = x + it.cell.cx;
-    const smear = Math.abs(it.p1 - it.p0) * fig.pitch;
-    const m = smoothstep(2, 8, smear);
+    if (it.rest) {
+      ctx.globalAlpha = 1;
+      ctx.fillText(DIGITS[it.target % 10], cx, y);
+      continue;
+    }
+    const travel = Math.abs(it.p1 - it.p0); // cells per shutter
+    const smear = travel * fig.pitch * s.px; // physical px
+    const m = smoothstep(1.5, 4.5, smear);
+    let drawn = false;
     if (m < 1) {
       ctx.globalAlpha = 1 - m;
-      drawDigits(ctx, cx, y, it.pos, it.d, fig.pitch, lo, hi);
+      drawn = drawDigits(ctx, cx, y, it.pos, it.target, fig.pitch, lo, hi);
     }
     if (m > 0) {
-      const n = Math.min(6, Math.max(2, Math.ceil((smear * s.px) / 2.5)));
-      ctx.globalAlpha = m * Math.min(1, 1.4 / n);
-      for (let j = 0; j < n; j++) drawDigits(ctx, cx, y, lerp(it.p0, it.p1, (j + 0.5) / n), it.d, fig.pitch, lo, hi);
+      const n = Math.min(maxCopies, Math.max(2, Math.ceil(smear / 3)));
+      ctx.globalAlpha = m * Math.min(1, 1.6 / n) * (1 - 0.3 * smoothstep(0.05, 0.4, travel));
+      for (let j = 0; j < n; j++) {
+        drawn = drawDigits(ctx, cx, y, lerp(it.p0, it.p1, (j + 0.5) / n), it.target, fig.pitch, lo, hi) || drawn;
+      }
+    }
+    if (drawn) {
+      r0 = Math.min(r0, cx - fig.cell / 2);
+      r1 = Math.max(r1, cx + fig.cell / 2);
     }
   }
   ctx.restore();
   ctx.save();
-  if (moving) {
+  if (r1 > r0) {
     // Drawn outside the clip and overlapping its edges by a few pixels (the
     // gradient holds solid beyond them), so the clip's anti-aliased boundary
     // row is covered too.
     const lip = 3;
-    ctx.fillStyle = linearGradient(ctx, 0, win.top, 0, win.top + fig.fade, GROUND_RAMP);
-    ctx.fillRect(left, win.top - lip, width, fig.fade + lip);
-    ctx.fillStyle = linearGradient(ctx, 0, win.bottom, 0, win.bottom - fig.fade, GROUND_RAMP);
-    ctx.fillRect(left, win.bottom - fig.fade, width, fig.fade + lip);
+    const pad = fig.cell * 0.1;
+    ctx.fillStyle = linearGradient(ctx, 0, top, 0, top + fig.fade, GROUND_RAMP);
+    ctx.fillRect(r0 - pad, top - lip, r1 - r0 + 2 * pad, fig.fade + lip);
+    ctx.fillStyle = linearGradient(ctx, 0, bottom, 0, bottom - fig.fade, GROUND_RAMP);
+    ctx.fillRect(r0 - pad, bottom - fig.fade, r1 - r0 + 2 * pad, fig.fade + lip);
   }
   ctx.font = fig.font;
   ctx.letterSpacing = '0px';
@@ -329,12 +379,40 @@ function buildLayout(reel) {
     c.letterSpacing = `${track}px`;
     return c.measureText(text).width - track;
   };
+  c.font = F.label;
+  c.letterSpacing = '0px';
+  const labelCap = c.measureText('H').actualBoundingBoxAscent; // centres labels on bars and clips
   const n = reel.scenes.length;
 
-  // Hero and secondary stats. The caption is sized to span the figure's ink.
-  const hero = figure(c, group(reel.frames), F.hero);
+  // Hero: the largest size up to HERO_SIZE whose ink fits its column (a long
+  // reel's five-digit total shrinks rather than crossing the gutter).
+  const span = HERO.x1 - HERO.x0;
+  const total = group(reel.frames);
+  let heroSize = HERO_SIZE;
+  let hero = figure(c, total, font(heroSize, 'serif', 300));
+  for (let i = 0; i < 3 && hero.inkRight - hero.ink > span; i++) {
+    heroSize *= (0.995 * span) / (hero.inkRight - hero.ink);
+    hero = figure(c, total, font(heroSize, 'serif', 300));
+  }
+  const heroBase = HERO.cap + hero.top;
+
+  // The caption spans the figure's ink and sits a clear gap below its lowest
+  // descender (the comma's tail), so figure and caption never touch.
   const heroInk = hero.inkRight - hero.ink;
-  const captionSize = Math.min(30, (30 * heroInk) / measure(CAPTION, font(30, 'sans', 400), 0));
+  const capSize = clamp((30 * heroInk) / measure(CAPTION, font(30, 'sans', 400), 0), 20, 30);
+  const capFont = font(capSize, 'sans', 400);
+  c.font = capFont;
+  c.letterSpacing = '0px';
+  const cm = c.measureText(CAPTION);
+  const capY = heroBase + Math.max(hero.bot, hero.sepBot) + capSize * 0.75 + cm.actualBoundingBoxAscent;
+  const caption = {
+    font: capFont,
+    y: capY,
+    top: capY - cm.actualBoundingBoxAscent - capSize * 0.2,
+    bottom: capY + cm.actualBoundingBoxDescent + capSize * 0.2,
+    rise: capSize * 1.5,
+  };
+
   const stats = [
     { value: String(n).padStart(2, '0'), name: 'SCENES' },
     { value: String(reel.fps), name: 'FPS' },
@@ -343,13 +421,13 @@ function buildLayout(reel) {
 
   // Bar chart. The label column is as wide as the longest measured title and
   // the plot leaves room for the widest value label, so nothing can collide.
-  // Titles share one size, shrunk (to no less than 12 px) if the longest
+  // Titles share one size, shrunk (to no less than 13 px) if the longest
   // would squeeze the plot; one still too long is cut with an ellipsis.
   const maxTitleW = (BARS.x1 - BARS.x0) * 0.4;
   let titles = reel.scenes.map((sc) => sc.title.toUpperCase());
-  let titleSize = 15;
+  let titleSize = 16;
   const widest = Math.max(...titles.map((tt) => measure(tt, F.label)));
-  if (widest > maxTitleW) titleSize = Math.max(12, (15 * maxTitleW) / widest);
+  if (widest > maxTitleW) titleSize = Math.max(13, (16 * maxTitleW) / widest);
   const titleFont = font(titleSize, 'mono', 500);
   titles = titles.map((tt) => {
     if (measure(tt, titleFont) <= maxTitleW) return tt;
@@ -360,19 +438,22 @@ function buildLayout(reel) {
   const ax = tx + Math.max(...titles.map((tt) => measure(tt, titleFont))) + 32;
   const valueW = measure('00.0', F.label, 0.5);
   const maxDur = Math.max(...reel.scenes.map((sc) => sc.duration));
-  const axisMax = Math.ceil(maxDur + 0.4);
+  // About four labelled gridlines, on a round step, whatever the durations.
+  const step = niceStep(maxDur + 0.4, 4);
+  const axisMax = Math.ceil((maxDur + 0.4) / step) * step;
   const k = (BARS.x1 - valueW - 16 - ax) / axisMax;
   const pitch = (BARS.bottom - BARS.top) / n;
-  // A labelled gridline every 2 s (every second on a short axis).
-  const step = axisMax > 6 ? 2 : 1;
   const ticks = [];
-  for (let v = 0; v <= axisMax; v += step) ticks.push({ v, text: String(v) });
+  for (let v = 0; v <= axisMax + 1e-9; v += step) ticks.push({ v, u: v / axisMax, text: String(+v.toFixed(2)) });
+  // Bars stagger across a fixed span, so a long reel doesn't run into the timeline beat.
+  const each = Math.min(0.12, 0.84 / Math.max(1, n - 1));
   const rows = reel.scenes.map((sc, i) => ({
     i,
     num: String(i + 1).padStart(2, '0'),
     title: titles[i],
     dur: sc.duration,
     y: BARS.top + pitch * (i + 0.5),
+    delay: i * each,
   }));
 
   // Gantt strip: scenes alternate between two lanes so that transitions show
@@ -394,16 +475,19 @@ function buildLayout(reel) {
     if (b > a) overlaps.push({ i, a, b });
   }
   const endLabel = `${reel.duration.toFixed(1)} S`;
-  const endW = measure(endLabel, F.small);
+  const endW = measure(endLabel, F.label);
+  const gStep = niceStep(reel.duration, 5);
   const gTicks = [];
-  for (let v = 0; v < reel.duration - 1e-6; v += 10) {
+  for (let v = 0; v < reel.duration - 1e-6; v += gStep) {
     const x = GANTT.x0 + v * gk;
+    const text = String(+v.toFixed(2));
     // Drop a tick label that would crowd the end-of-reel label.
-    const fits = x + measure(String(v), F.small) / 2 < GANTT.x1 - endW - 24;
-    gTicks.push({ v, x, text: fits ? String(v) : '' });
+    const fits = x + measure(text, F.label) / 2 < GANTT.x1 - endW - 24;
+    gTicks.push({ v, u: v / reel.duration, x, text: fits ? text : '' });
   }
 
   // Legend, set right to left from the margin: swatch, gap, text.
+  const swatch = Math.round(labelCap) - 1;
   const legend = [
     { text: 'THIS SCENE', color: SUN },
     { text: 'TRANSITION', color: MINT },
@@ -411,21 +495,25 @@ function buildLayout(reel) {
   let lx = GANTT.x1;
   for (let i = legend.length - 1; i >= 0; i--) {
     const it = legend[i];
-    it.x = lx - measure(it.text, F.small);
-    it.sx = it.x - 20;
+    it.x = lx - measure(it.text, F.label);
+    it.sx = it.x - swatch - 10;
     lx = it.sx - 32;
   }
-  // The playhead's frame label stays between the module label and the legend.
-  const flagW = measure('FRAME 0,000,000', F.small);
+  // The playhead's readout stays between the module label and the legend.
+  const tw = reel.duration.toFixed(1).length;
+  const fw = group(reel.frames).length;
+  const flagW = measure(flagText(reel.duration, reel.frames, tw, fw), F.flag);
   const flagMin = GANTT.x0 + measure('REEL TIMELINE', F.label) + 32 + flagW / 2;
   const flagMax = Math.max(flagMin, legend[0].sx - 32 - flagW / 2);
 
   return {
+    labelCap,
     hero,
-    caption: font(captionSize, 'sans', 400),
+    heroBase,
+    caption,
     stats,
-    bars: { rows, tx, ax, k, ticks, titleFont, titleCap: titleSize * 0.8 },
-    gantt: { gk, clips, overlaps, ticks: gTicks, endLabel, legend, flagMin, flagMax },
+    bars: { rows, tx, ax, k, ticks, titleFont, titleCap: (labelCap * titleSize) / 16 },
+    gantt: { gk, clips, overlaps, ticks: gTicks, endLabel, legend, swatch, tw, fw, flagMin, flagMax },
   };
 }
 
@@ -440,37 +528,39 @@ function drawHero(ctx, s, L) {
   const t = s.t;
   const fig = L.hero;
   const out = outAt(HERO.x0, HERO.rule);
-  hline(ctx, HERO.x0, HERO.x1, HERO.rule, eseg(t, T.rules, T.rules + 1.1, DRAW), eseg(t, out, out + 0.45, DRAW), RULE);
-  const e = envelope(t, 0.4, out);
+  hline(ctx, HERO.x0, HERO.x1, HERO.rule, eseg(t, 0, 1, ARRIVE), eseg(t, out, out + 0.45, DRAW), RULE);
+  const e = envelope(t, 0.12, out);
   label(ctx, 'TOTAL FRAMES', HERO.x0 + e.dx, HERO.rule + HEAD + e.dy, { alpha: 0.72 * e.a });
 
-  // The odometer counts up column by column and lands left to right, each
-  // digit scrolling from 0 to its value and settling into its detent.
-  drawFigure(ctx, s, fig, HERO.x0 - fig.ink, HERO.base, BONE, (col) => ({
-    tRise: 0.3 + col * 0.06,
-    tIn: T.roll + col * 0.07,
-    tLand: T.roll + 1.05 + col * 0.18,
-    tOut: outAt(HERO.x0 + col * 150, HERO.base) - 0.06,
+  // The odometer counts up and lands left to right, each column settling
+  // into its detent. Lower-order columns spin extra turns, so speed rises
+  // from left to right and the last column to land is the fastest.
+  const x = HERO.x0 - fig.ink;
+  drawFigure(ctx, s, fig, x, L.heroBase, BONE, (cell) => ({
+    tRise: T.rise + cell.col * 0.06,
+    tIn: T.roll + cell.col * 0.07,
+    tLand: T.roll + 1.05 + cell.col * 0.18,
+    tOut: outAt(x + cell.cx, L.heroBase) - 0.06,
+    turns: Math.max(0, 2 - (fig.cols - 1 - cell.col)),
   }));
 
-  // Caption rises out of a mask under the figure.
-  const cy = HERO.base + 62;
+  // Caption rises out of a slot under the figure, and is the first to leave.
+  const C = L.caption;
   const k = eseg(t, T.caption, T.caption + 0.7, 'outCubic');
-  const co = outAt(HERO.x0 + 200, cy);
-  const o = eseg(t, co, co + 0.35, 'inCubic');
+  const o = eseg(t, T.exit - 0.1, T.exit + 0.25, 'inCubic');
   if (k > 0 && o < 1) {
     ctx.save();
     if (k < 1) {
       ctx.beginPath();
-      ctx.rect(HERO.x0 - 8, cy - 34, HERO.x1 - HERO.x0 + 60, 46);
+      ctx.rect(HERO.x0 - 8, C.top, HERO.x1 - HERO.x0 + 60, C.bottom - C.top);
       ctx.clip();
     }
-    ctx.font = L.caption;
+    ctx.font = C.font;
     ctx.letterSpacing = '0px';
     ctx.textAlign = 'left';
     ctx.globalAlpha = 0.74 * (1 - o);
     ctx.fillStyle = BONE;
-    ctx.fillText(CAPTION, HERO.x0 + o * 18, cy + (1 - k) * 44);
+    ctx.fillText(CAPTION, HERO.x0 + o * 18, C.y + (1 - k) * C.rise);
     ctx.restore();
   }
 }
@@ -478,19 +568,20 @@ function drawHero(ctx, s, L) {
 function drawStats(ctx, s, L) {
   const t = s.t;
   const out = outAt(HERO.x0, HERO.statsRule);
-  hline(ctx, HERO.x0, HERO.x1, HERO.statsRule, eseg(t, 1.0, 2.0, DRAW), eseg(t, out, out + 0.45, DRAW), RULE);
+  hline(ctx, HERO.x0, HERO.x1, HERO.statsRule, eseg(t, 0.12, 1.12, ARRIVE), eseg(t, out, out + 0.45, DRAW), RULE);
   const cellW = (HERO.x1 - HERO.x0) / L.stats.length;
   L.stats.forEach((st, j) => {
     const x = HERO.x0 + j * cellW;
     const t0 = T.stats + j * 0.14;
     const o = outAt(x, HERO.statsRule);
-    const e = envelope(t, t0 - 0.1, o);
+    // Labels arrive with the rule; the figures rise under them later.
+    const e = envelope(t, 0.3 + j * 0.07, o);
     label(ctx, st.name, x + e.dx, HERO.statsRule + HEAD + e.dy, { alpha: 0.72 * e.a });
-    drawFigure(ctx, s, st.fig, x - st.fig.ink, HERO.statsBase, BONE, (col) => ({
-      tRise: t0 - 0.45 + col * 0.05,
-      tIn: t0 + col * 0.06,
-      tLand: t0 + 0.8 + col * 0.12,
-      tOut: o + col * 0.04,
+    drawFigure(ctx, s, st.fig, x - st.fig.ink, HERO.statsBase, BONE, (cell) => ({
+      tRise: t0 - 0.45 + cell.col * 0.05,
+      tIn: t0 + cell.col * 0.06,
+      tLand: t0 + 0.8 + cell.col * 0.12,
+      tOut: o + cell.col * 0.04,
     }));
   });
 }
@@ -500,16 +591,17 @@ function drawBars(ctx, s, L) {
   const me = s.index;
   const B = L.bars;
   const out = outAt(BARS.x0, BARS.rule);
-  hline(ctx, BARS.x0, BARS.x1, BARS.rule, eseg(t, T.rules + 0.12, T.rules + 1.22, DRAW), eseg(t, out, out + 0.45, DRAW), RULE);
-  const e = envelope(t, 0.5, out);
+  hline(ctx, BARS.x0, BARS.x1, BARS.rule, eseg(t, 0.05, 1.05, ARRIVE), eseg(t, out, out + 0.45, DRAW), RULE);
+  const e = envelope(t, 0.17, out);
   label(ctx, 'SCENE DURATION', BARS.x0 + e.dx, BARS.rule + HEAD + e.dy, { alpha: 0.72 * e.a });
-  const e2 = envelope(t, 0.6, outAt(BARS.x1, BARS.rule));
-  label(ctx, 'SECONDS', BARS.x1 + e2.dx, BARS.rule + HEAD + e2.dy, { alpha: 0.45 * e2.a, align: 'right' });
+  const e2 = envelope(t, 0.22, outAt(BARS.x1, BARS.rule));
+  label(ctx, 'SECONDS', BARS.x1 + e2.dx, BARS.rule + HEAD + e2.dy, { alpha: 0.5 * e2.a, align: 'right' });
 
-  // Gridlines grow down from the top; the zero line is the axis.
+  // Gridlines grow down from the top, left to right across the axis; the
+  // zero line is the axis itself.
   for (const tk of B.ticks) {
     const gx = B.ax + tk.v * B.k;
-    const d = eseg(t, 0.55 + tk.v * 0.06, 1.35 + tk.v * 0.06, DRAW);
+    const d = eseg(t, 0.55 + tk.u * 0.48, 1.35 + tk.u * 0.48, DRAW);
     const o = outAt(gx, BARS.top);
     const fade = 1 - eseg(t, o, o + 0.35, 'inCubic');
     if (d > 0 && fade > 0) {
@@ -518,22 +610,21 @@ function drawBars(ctx, s, L) {
       const w = tk.v === 0 ? 1.5 : 1;
       ctx.fillRect(gx - w / 2, BARS.top - 8, w, (BARS.bottom - BARS.top + 16) * d);
     }
-    const te = envelope(t, 1.0 + tk.v * 0.05, o);
-    label(ctx, tk.text, gx + te.dx, BARS.bottom + 33 + te.dy, { f: F.small, align: 'center', alpha: 0.5 * te.a });
+    const te = envelope(t, 1.0 + tk.u * 0.4, o);
+    label(ctx, tk.text, gx + te.dx, BARS.bottom + 33 + te.dy, { align: 'center', alpha: 0.6 * te.a });
   }
 
   for (const r of B.rows) {
     const mine = r.i === me;
-    const t0 = T.bars + r.i * 0.12;
+    const t0 = T.bars + r.delay;
     const g = eseg(t, t0, t0 + 1.0, GROW);
     const o = outAt(B.ax, r.y);
     const gone = eseg(t, o, o + 0.4, 'inCubic');
     const h = recap(t, r.i, me);
     const e = envelope(t, t0 - 0.22, o);
-    const base = r.y + LABEL_CAP / 2;
     const ty = r.y + B.titleCap / 2 + e.dy * 0.6;
-    label(ctx, r.num, BARS.x0 + e.dx, ty, { f: B.titleFont, color: mine ? SUN : BONE, alpha: (mine ? 1 : 0.38 + 0.3 * h) * e.a });
-    label(ctx, r.title, B.tx + e.dx, ty, { f: B.titleFont, alpha: (mine ? 1 : 0.62 + 0.38 * h) * e.a });
+    label(ctx, r.num, BARS.x0 + e.dx, ty, { f: B.titleFont, color: mine ? SUN : BONE, alpha: (mine ? 1 : 0.42 + 0.3 * h) * e.a });
+    label(ctx, r.title, B.tx + e.dx, ty, { f: B.titleFont, alpha: (mine ? 1 : 0.66 + 0.34 * h) * e.a });
 
     if (g <= 0) continue;
     const len = r.dur * B.k * g;
@@ -547,9 +638,9 @@ function drawBars(ctx, s, L) {
     }
     // The value rides the bar end and counts up with it.
     const va = clamp01(g * 5) * (1 - eseg(t, o + 0.1, o + 0.4, 'inCubic'));
-    label(ctx, (r.dur * g).toFixed(1), x1 + 14 + gone * 18, base, {
+    label(ctx, (r.dur * g).toFixed(1), x1 + 14 + gone * 18, r.y + L.labelCap / 2, {
       color: mine ? SUN : BONE,
-      alpha: (mine ? 1 : 0.62 + 0.38 * h) * va,
+      alpha: (mine ? 1 : 0.66 + 0.34 * h) * va,
       track: 0.5,
     });
   }
@@ -564,18 +655,19 @@ function drawGantt(ctx, s, L) {
   const bottom = GANTT.lane1 + GANTT.laneH;
 
   const out = outAt(GANTT.x0, GANTT.rule);
-  hline(ctx, GANTT.x0, GANTT.x1, GANTT.rule, eseg(t, T.rules + 0.25, T.rules + 1.4, DRAW), eseg(t, out, out + 0.5, DRAW), RULE);
-  const e = envelope(t, 0.65, out);
+  hline(ctx, GANTT.x0, GANTT.x1, GANTT.rule, eseg(t, 0.2, 1.2, ARRIVE), eseg(t, out, out + 0.5, DRAW), RULE);
+  const e = envelope(t, 0.4, out);
   label(ctx, 'REEL TIMELINE', GANTT.x0 + e.dx, GANTT.rule + HEAD + e.dy, { alpha: 0.72 * e.a });
 
-  // Time axis: a labelled tick every 10 s and the reel's end called out.
+  // Time axis: about five labelled ticks on a round step, and the reel's end
+  // called out.
   const axOut = outAt(GANTT.x0, GANTT.axis);
   const axGone = eseg(t, axOut, axOut + 0.5, DRAW);
-  hline(ctx, GANTT.x0, GANTT.x1, GANTT.axis, eseg(t, 0.55, 1.65, DRAW), axGone, RULE, 1);
+  hline(ctx, GANTT.x0, GANTT.x1, GANTT.axis, eseg(t, 0.45, 1.55, DRAW), axGone, RULE, 1);
   const axEnd = lerp(GANTT.x0, GANTT.x1, axGone); // left end of the retracting axis
   for (const tk of G.ticks) {
     // Ticks grow down from the axis and leave with it as it retracts past them.
-    const d = eseg(t, 0.9 + tk.v * 0.012, 1.3 + tk.v * 0.012, 'outCubic') * clamp01((tk.x - axEnd + 12) / 12);
+    const d = eseg(t, 0.9 + tk.u * 0.5, 1.3 + tk.u * 0.5, 'outCubic') * clamp01((tk.x - axEnd + 12) / 12);
     const o = outAt(tk.x, GANTT.axis);
     if (d > 0) {
       ctx.globalAlpha = 1;
@@ -583,20 +675,20 @@ function drawGantt(ctx, s, L) {
       ctx.fillRect(tk.x - 0.5, GANTT.axis, 1, 9 * d);
     }
     if (tk.text) {
-      const te = envelope(t, 1.05 + tk.v * 0.012, o);
-      label(ctx, tk.text, tk.x + te.dx, GANTT.axis + 32 + te.dy, { f: F.small, align: tk.v === 0 ? 'left' : 'center', alpha: 0.5 * te.a });
+      const te = envelope(t, 1.05 + tk.u * 0.5, o);
+      label(ctx, tk.text, tk.x + te.dx, GANTT.axis + 30 + te.dy, { align: tk.v === 0 ? 'left' : 'center', alpha: 0.6 * te.a });
     }
   }
   const ee = envelope(t, 1.5, outAt(GANTT.x1, GANTT.axis));
-  label(ctx, G.endLabel, GANTT.x1 + ee.dx, GANTT.axis + 32 + ee.dy, { f: F.small, align: 'right', alpha: 0.8 * ee.a });
+  label(ctx, G.endLabel, GANTT.x1 + ee.dx, GANTT.axis + 30 + ee.dy, { align: 'right', alpha: 0.8 * ee.a });
 
   for (const it of G.legend) {
     const le = envelope(t, T.gantt + 0.3, outAt(it.sx, GANTT.rule));
     if (le.a <= 0) continue;
     ctx.globalAlpha = le.a;
     ctx.fillStyle = it.color;
-    ctx.fillRect(it.sx + le.dx, GANTT.rule + HEAD - SMALL_CAP + le.dy, 10, 10);
-    label(ctx, it.text, it.x + le.dx, GANTT.rule + HEAD + le.dy, { f: F.small, alpha: 0.72 * le.a });
+    ctx.fillRect(it.sx + le.dx, GANTT.rule + HEAD - (L.labelCap + G.swatch) / 2 + le.dy, G.swatch, G.swatch);
+    label(ctx, it.text, it.x + le.dx, GANTT.rule + HEAD + le.dy, { alpha: 0.72 * le.a });
   }
 
   // Clips are revealed by a front that sweeps the timeline from start to end.
@@ -637,8 +729,8 @@ function drawGantt(ctx, s, L) {
     }
     // The label leaves before its clip has collapsed onto it.
     const lx = X(cl.head) + 8;
-    const la = clamp01((xb - lx - 20) / 24) * clamp01(1 - gone * 2.5);
-    label(ctx, cl.num, Math.max(lx, x0 + 8), y + GANTT.laneH / 2 + SMALL_CAP / 2, { f: F.small, color: mine ? NAVY : BONE, alpha: 0.85 * la, track: 1 });
+    const la = clamp01((xb - lx - 24) / 24) * clamp01(1 - gone * 2.5);
+    label(ctx, cl.num, Math.max(lx, x0 + 8), y + (GANTT.laneH + L.labelCap) / 2, { color: mine ? NAVY : BONE, alpha: 0.9 * la, track: 1 });
   }
 
   // Transitions: a mint bridge between the lanes wherever two clips overlap.
@@ -654,7 +746,8 @@ function drawGantt(ctx, s, L) {
     if (xb - x0 > 0.2) ctx.fillRect(x0, GANTT.lane0 + GANTT.laneH, xb - x0, GANTT.lane1 - GANTT.lane0 - GANTT.laneH);
   }
 
-  // Playhead at the true global time, with the live frame number.
+  // Playhead at the true global time, with a live readout of that time and
+  // the frame number.
   const px = X(now);
   const pOut = outAt(px, GANTT.lane0);
   const pa = eseg(t, T.playhead, T.playhead + 0.3, 'outCubic') * (1 - eseg(t, pOut, pOut + 0.3, 'inCubic'));
@@ -674,8 +767,8 @@ function drawGantt(ctx, s, L) {
     ctx.rotate(Math.PI / 4);
     ctx.fillRect(-5.66, -5.66, 11.31, 11.31);
     ctx.restore();
-    const fx = Math.min(Math.max(px, G.flagMin), G.flagMax);
-    label(ctx, `FRAME ${group(s.frame)}`, fx, GANTT.rule + HEAD + drop, { f: F.small, color: SIGNAL, align: 'center', alpha: pa });
+    const fx = clamp(px, G.flagMin, G.flagMax);
+    label(ctx, flagText(now, s.frame, G.tw, G.fw), fx, GANTT.rule + HEAD + drop, { f: F.flag, color: SIGNAL, align: 'center', alpha: pa });
   }
 }
 
@@ -705,7 +798,7 @@ export default defineScene({
     // later: overlapping action between the transition and the layout.
     ROWS.forEach((row, i) => {
       ctx.save();
-      ctx.translate(0, (70 + 25 * i) * (1 - eseg(s.t, 0, 1.2 + 0.1 * i, SETTLE_IN)));
+      ctx.translate(0, (30 + 15 * i) * (1 - eseg(s.t, 0, 1.2 + 0.1 * i, SETTLE_IN)));
       for (const draw of row) draw(ctx, s, s.state);
       ctx.restore();
     });

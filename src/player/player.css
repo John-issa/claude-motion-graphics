@@ -348,14 +348,16 @@ code {
   white-space: nowrap;
 }
 
+/* Labels sit in the bottom-right corners, clear of the paused play button
+   at bottom left. */
 .gl-action {
-  left: calc(5% + 6px);
+  right: calc(5% + 6px);
   bottom: calc(5% + 6px);
   color: var(--muted);
 }
 
 .gl-title {
-  left: calc(10% + 6px);
+  right: calc(10% + 6px);
   bottom: calc(10% + 6px);
   color: var(--text);
 }
@@ -1622,10 +1624,13 @@ code {
 }
 
 /* Three groups side by side (playback, stepping, view), stacked when narrow.
-   Keys sit right-aligned against their description, so each pair reads as one. */
+   Keys sit right-aligned against their description, so each pair reads as
+   one. A group is never narrower than its content, so no description wraps
+   while the three share a row; the stacked layout takes over well before
+   they could stop fitting. */
 .keys-groups {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(max-content, 1fr));
   gap: 18px 40px;
   padding: 2px 16px 18px;
 }
@@ -1642,7 +1647,7 @@ code {
 
 .keys-list {
   display: grid;
-  gap: 8px;
+  gap: 8px 14px;
   margin: 0;
 }
 
@@ -1654,9 +1659,36 @@ code {
   min-width: 0;
 }
 
+/* Each group's keys column is as wide as its own widest keys: the rows are
+   subgrids of the group, so their keys and descriptions still line up. */
+@supports (grid-template-columns: subgrid) {
+  .keys-group {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    align-content: start;
+    column-gap: 14px;
+  }
+
+  .keys-group-title {
+    grid-column: 2;
+    padding-left: 0;
+  }
+
+  .keys-list,
+  .keys-list > div {
+    grid-column: 1 / -1;
+    grid-template-columns: subgrid;
+  }
+}
+
 @container page (max-width: 900px) {
   .keys-groups {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* Stacked, the groups share one keys column so all descriptions align. */
+  .keys-group {
+    grid-template-columns: 124px minmax(0, 1fr);
   }
 }
 
