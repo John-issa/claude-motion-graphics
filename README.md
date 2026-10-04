@@ -3,10 +3,10 @@
 [![CI](https://github.com/John-issa/claude-motion-graphics/actions/workflows/ci.yml/badge.svg)](https://github.com/John-issa/claude-motion-graphics/actions/workflows/ci.yml)
 
 A motion graphics showreel that renders live in the browser, frame by frame, from
-a small motion engine written for it. There are no video files, no audio files
-and no animation libraries: every frame is computed on demand from the current
-time, and the soundtrack is synthesized from the same timeline. You can scrub,
-step frame by frame, type your own title into it, and export it to video.
+a small motion engine written for it. The player uses no video files, no audio
+files and no animation libraries: every frame is computed on demand from the
+current time, and the soundtrack is synthesized from the same timeline. You can
+scrub, step frame by frame, type your own title into it, and export it to video.
 
 ![Highlights from the reel: one short clip from each of the eight scenes](media/preview.gif)
 
