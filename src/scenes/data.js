@@ -47,13 +47,13 @@ const CAPTION = 'frames, each computed on demand, none stored';
 // Grid in design px. Title-safe is x 192-1728, y 108-972; the chapter slug
 // owns the top-left corner, so every module starts below y 200. The hero
 // hangs from `cap`, the line its tallest digit reaches.
-const HERO = { x0: 192, x1: 848, rule: 204, cap: 298, statsRule: 612, statsBase: 733 };
+const HERO = { x0: 192, x1: 848, rule: 204, cap: 303, statsRule: 612, statsBase: 733 };
 const BARS = { x0: 968, x1: 1728, rule: 204, top: 270, bottom: 700, h: 16 };
 const GANTT = { x0: 192, x1: 1728, rule: 792, lane0: 850, lane1: 882, laneH: 24, axis: 918 };
 const HEAD = 34; // module rule to label baseline
 
-// Beats, in local seconds. The scaffold (rules and labels) arrives with the
-// push from t = 0; the data follows it.
+// Beats, in local seconds. The scaffold (rules and labels) is already drawing
+// on as the push reveals it; the data follows it.
 const T = { rise: 0.1, roll: 0.8, stats: 1.45, caption: 1.8, bars: 1.6, gantt: 3.2, playhead: 3.95, sweep: 4.7, exit: 6.05 };
 
 // Motion vocabulary.
@@ -156,8 +156,20 @@ function figure(c, text, fontStr) {
     cells.push({ ch, digit, col: digit >= 0 ? cols++ : -1, cx: x + w / 2 });
     x += w;
   }
+  // An extra turn for a column that would otherwise travel no further than
+  // the one to its left, so the low-order columns whir as in a count-up. One
+  // turn at most: more would pass half a digit per frame at the peak, where
+  // a strip seen at 60 fps starts to wheel backwards.
+  const turns = [];
+  let prev = -1;
+  for (const cl of cells) {
+    if (cl.digit < 0) continue;
+    const k = cl.digit <= prev ? 1 : 0;
+    turns.push(k);
+    prev = cl.digit + 10 * k;
+  }
   const last = cells[cells.length - 1];
-  const fade = Math.max(8, top * 0.075);
+  const fade = Math.max(8, top * 0.1);
   const clear = top * 0.01;
   const winTop = top + clear + fade;
   const winBot = Math.max(0, bot) + clear + fade;
@@ -165,6 +177,7 @@ function figure(c, text, fontStr) {
     font: fontStr,
     cells,
     cols,
+    turns,
     cell,
     width: x,
     ink: cells[0].cx - c.measureText(text[0]).actualBoundingBoxLeft,
@@ -180,7 +193,7 @@ function figure(c, text, fontStr) {
 }
 
 /** How far (in cells) a column has rolled on past its digit to exit: straight up, accelerating. */
-const exitRoll = (t, c) => eseg(t, c.tOut, c.tOut + 0.42, 'inCubic');
+const exitRoll = (t, c) => eseg(t, c.tOut, c.tOut + 0.36, 'inCubic');
 
 /**
  * Where a digit column's strip sits at time t. Strip index k shows digit
@@ -239,17 +252,17 @@ function drawDigits(g, cx, y, pos, target, pitch, lo, hi) {
  * that reach them, so digits dissolve as they roll through (much cheaper than
  * gradient-filled glyphs). A column's smear is its strip travel across a
  * half-frame shutter centred on t: a still column draws one crisp glyph, a
- * moving one adds copies spread along the smear no more than 3 physical px
- * apart, which reads as vertical motion blur rather than ghosts. The copy cap
- * is tied to the output size so the 1280 budget path stays lean, and a
- * spinning column dims a little, as a real smear spreads its ink.
+ * moving one adds copies spread along the smear, 2.5 physical px apart up to
+ * a cap tied to the output size, which reads as vertical motion blur rather
+ * than ghosts. A spinning column also dims a little, as a real smear spreads
+ * its ink.
  *
  * Separators ride their column's rise and exit (not its count), fading with
  * distance. They draw above the ramps, so a comma's tail is never masked.
  */
 function drawFigure(ctx, s, fig, x, y, color, timing) {
   const half = SHUTTER / (2 * s.fps);
-  const maxCopies = s.px > 0.75 ? 40 : 14;
+  const maxCopies = s.px > 0.75 ? 20 : 16;
   const cols = [];
   const seps = [];
   let off = 0;
@@ -268,7 +281,8 @@ function drawFigure(ctx, s, fig, x, y, color, timing) {
     const p1 = stripPos(s.t + half, target, c);
     const rest = pos === target && p0 === target && p1 === target;
     still &&= rest;
-    cols.push({ cell, target, pos, p0, p1, rest });
+    // A column dissolves as it rolls out, so no half-digit lingers at the edge.
+    cols.push({ cell, target, pos, p0, p1, rest, a: 1 - smoothstep(0.15, 0.55, ex) });
   }
   const top = y - fig.winTop;
   const bottom = y + fig.winBot;
@@ -291,6 +305,7 @@ function drawFigure(ctx, s, fig, x, y, color, timing) {
   let r1 = -Infinity;
   for (const it of cols) {
     const cx = x + it.cell.cx;
+    ctx.fillStyle = color;
     if (it.rest) {
       ctx.globalAlpha = 1;
       ctx.fillText(DIGITS[it.target % 10], cx, y);
@@ -301,12 +316,16 @@ function drawFigure(ctx, s, fig, x, y, color, timing) {
     const m = smoothstep(1.5, 4.5, smear);
     let drawn = false;
     if (m < 1) {
-      ctx.globalAlpha = 1 - m;
+      ctx.globalAlpha = (1 - m) * it.a;
       drawn = drawDigits(ctx, cx, y, it.pos, it.target, fig.pitch, lo, hi);
     }
     if (m > 0) {
-      const n = Math.min(maxCopies, Math.max(2, Math.ceil(smear / 3)));
-      ctx.globalAlpha = m * Math.min(1, 1.6 / n) * (1 - 0.3 * smoothstep(0.05, 0.4, travel));
+      // Per-copy alpha stays at 0.08 or above: dozens of fainter draws pile
+      // up 8-bit rounding into a visible colour cast on both raster paths.
+      // The dimming goes into the colour for the same reason.
+      const n = Math.min(maxCopies, Math.max(2, Math.ceil(smear / 2.5)));
+      ctx.globalAlpha = m * Math.min(1, 1.6 / n) * it.a;
+      ctx.fillStyle = mix(color, NAVY, 0.3 * smoothstep(0.04, 0.2, travel));
       for (let j = 0; j < n; j++) {
         drawn = drawDigits(ctx, cx, y, lerp(it.p0, it.p1, (j + 0.5) / n), it.target, fig.pitch, lo, hi) || drawn;
       }
@@ -528,20 +547,20 @@ function drawHero(ctx, s, L) {
   const t = s.t;
   const fig = L.hero;
   const out = outAt(HERO.x0, HERO.rule);
-  hline(ctx, HERO.x0, HERO.x1, HERO.rule, eseg(t, 0, 1, ARRIVE), eseg(t, out, out + 0.45, DRAW), RULE);
+  hline(ctx, HERO.x0, HERO.x1, HERO.rule, eseg(t, -0.1, 0.9, ARRIVE), eseg(t, out, out + 0.45, DRAW), RULE);
   const e = envelope(t, 0.12, out);
   label(ctx, 'TOTAL FRAMES', HERO.x0 + e.dx, HERO.rule + HEAD + e.dy, { alpha: 0.72 * e.a });
 
-  // The odometer counts up and lands left to right, each column settling
-  // into its detent. Lower-order columns spin extra turns, so speed rises
-  // from left to right and the last column to land is the fastest.
+  // The odometer counts up: the columns spin up together, the low-order
+  // ones whirring through an extra turn, and land left to right, each
+  // settling into its detent.
   const x = HERO.x0 - fig.ink;
   drawFigure(ctx, s, fig, x, L.heroBase, BONE, (cell) => ({
     tRise: T.rise + cell.col * 0.06,
-    tIn: T.roll + cell.col * 0.07,
+    tIn: T.roll + cell.col * 0.02,
     tLand: T.roll + 1.05 + cell.col * 0.18,
     tOut: outAt(x + cell.cx, L.heroBase) - 0.06,
-    turns: Math.max(0, 2 - (fig.cols - 1 - cell.col)),
+    turns: fig.turns[cell.col],
   }));
 
   // Caption rises out of a slot under the figure, and is the first to leave.
@@ -591,7 +610,7 @@ function drawBars(ctx, s, L) {
   const me = s.index;
   const B = L.bars;
   const out = outAt(BARS.x0, BARS.rule);
-  hline(ctx, BARS.x0, BARS.x1, BARS.rule, eseg(t, 0.05, 1.05, ARRIVE), eseg(t, out, out + 0.45, DRAW), RULE);
+  hline(ctx, BARS.x0, BARS.x1, BARS.rule, eseg(t, -0.05, 0.95, ARRIVE), eseg(t, out, out + 0.45, DRAW), RULE);
   const e = envelope(t, 0.17, out);
   label(ctx, 'SCENE DURATION', BARS.x0 + e.dx, BARS.rule + HEAD + e.dy, { alpha: 0.72 * e.a });
   const e2 = envelope(t, 0.22, outAt(BARS.x1, BARS.rule));
@@ -623,7 +642,7 @@ function drawBars(ctx, s, L) {
     const h = recap(t, r.i, me);
     const e = envelope(t, t0 - 0.22, o);
     const ty = r.y + B.titleCap / 2 + e.dy * 0.6;
-    label(ctx, r.num, BARS.x0 + e.dx, ty, { f: B.titleFont, color: mine ? SUN : BONE, alpha: (mine ? 1 : 0.42 + 0.3 * h) * e.a });
+    label(ctx, r.num, BARS.x0 + e.dx, ty, { f: B.titleFont, color: mine ? SUN : BONE, alpha: (mine ? 1 : 0.5 + 0.3 * h) * e.a });
     label(ctx, r.title, B.tx + e.dx, ty, { f: B.titleFont, alpha: (mine ? 1 : 0.66 + 0.34 * h) * e.a });
 
     if (g <= 0) continue;

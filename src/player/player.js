@@ -260,8 +260,10 @@ export function createPlayer({ reel, target = 'dev', prefs = {} }) {
         w = box.w;
         h = box.h;
       } else {
+        // Scaled down, the picture is resampled anyway: keep it exactly 16:9
+        // (no partly painted row) rather than matching the box's rounding.
         w = Math.round(box.w * scale);
-        h = Math.round(box.h * scale);
+        h = Math.floor((w * 9) / 16);
       }
       w = Math.max(64, w);
       h = Math.max(36, h);
@@ -376,8 +378,39 @@ export function createPlayer({ reel, target = 'dev', prefs = {} }) {
     if (!state.ready) return;
     const t0 = performance.now();
     reel.render(ctx, state.t, { motionBlur: state.blur ? BLUR_SAMPLES : 0 });
+    fillUnpaintedRows();
     perf.renders.push(performance.now() - t0);
     syncUI();
+  }
+
+  /**
+   * The reel scales its 16:9 design to the canvas width. A 1:1 backing store
+   * follows the box's device pixels, which can be a fraction of a pixel taller
+   * than 16:9 (1098 × 618 holds 617.6 rows of picture), and a row the reel
+   * paints only partly would keep a blend of the previous frame. Paint that
+   * sliver in the stage colour, so each frame depends on t alone and the
+   * picture simply ends a device pixel early against the dark stage.
+   */
+  const stageColor = (() => {
+    try {
+      return getComputedStyle(document.documentElement).getPropertyValue('--stage').trim() || '#07080B';
+    } catch {
+      return '#07080B';
+    }
+  })();
+
+  function fillUnpaintedRows() {
+    const w = el.canvas.width;
+    const h = el.canvas.height;
+    const painted = Math.floor((w * 9) / 16);
+    if (h <= painted) return;
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.fillStyle = stageColor;
+    ctx.fillRect(0, painted, w, h - painted);
+    ctx.restore();
   }
 
   /**
