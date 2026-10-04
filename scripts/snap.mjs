@@ -6,7 +6,7 @@
 //   node scripts/snap.mjs --scene shader --frame 3.2 --width 1920    one full-size frame
 //   node scripts/snap.mjs --reel --from 0 --to 48 --step 2           whole reel, with transitions
 //   node scripts/snap.mjs --scene particles --bench                  ms per frame
-//   node scripts/snap.mjs --scene particles --audit                  determinism + hygiene checks
+//   node scripts/snap.mjs --scene particles --audit [--width 1920]   determinism + hygiene checks
 //
 // Options: --out <file.png>  --width <px per frame>  --cols <n>  --params '{"title":"HELLO"}'
 //          --seed <n>  --motion-blur <samples>
@@ -102,7 +102,7 @@ async function main() {
       }
       console.log(JSON.stringify(report, null, 2));
     } else if (args.audit) {
-      const res = await page.evaluate((o) => window.__audit(o), { scene, samples: Number(args.samples || 16) });
+      const res = await page.evaluate((o) => window.__audit(o), { scene, samples: Number(args.samples || 16), width: Number(args.width || 640) });
       console.log(JSON.stringify(res, null, 2));
     } else if (args.frame !== undefined) {
       const t = Number(args.frame);

@@ -169,6 +169,9 @@ export function createReel({ scenes, params = {}, seed = 1, fps = 60 } = {}) {
       end: e.end,
       duration: e.scene.duration,
       transition: e.transition.type,
+      // The full incoming transition, so a scene can sync to its neighbour's
+      // reveal (e.g. size an iris to it): { type, duration, ease, color, ... }.
+      transitionIn: { ...e.transition },
       usesWebGL: !!e.scene.usesWebGL,
     })),
   };
