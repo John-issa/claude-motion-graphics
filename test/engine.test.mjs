@@ -186,3 +186,15 @@ test('scene validation catches broken definitions', () => {
   assert.ok(validateScene({ id: 'Bad Id', title: '', duration: 0 }).length >= 3);
   assert.ok(validateScene({ id: 'x', title: 'X', duration: 2, render() {}, transition: { type: 'spin' } }).length === 1);
 });
+
+test('setup re-runs only for scenes that use the changed input', () => {
+  const calls = { a: 0, b: 0, c: 0 };
+  const mk = (id, uses) => defineScene({ id, title: id, duration: 2, uses, setup() { calls[id]++; return {}; }, render() {} });
+  const reel = createReel({ scenes: [mk('a', ['title']), mk('b', []), mk('c', undefined)] });
+  reel.setParams({ title: 'X' }); // setup runs lazily in init(); count from here
+  assert.deepEqual(calls, { a: 1, b: 0, c: 1 });
+  reel.setSeed(9);
+  assert.deepEqual(calls, { a: 1, b: 0, c: 2 });
+  reel.setParams({ title: 'X' }); // unchanged: nothing re-runs
+  assert.deepEqual(calls, { a: 1, b: 0, c: 2 });
+});

@@ -455,5 +455,33 @@ export function createLiveAudio(getScore) {
       this.stop();
       if (ac && ac.state === 'running') await ac.suspend().catch(() => {});
     },
+    /**
+     * Score time being heard right now, or null when stopped. Output latency
+     * is subtracted so a picture following this clock matches the sound.
+     */
+    position() {
+      if (!anchor || !ac) return null;
+      const latency = (ac.outputLatency || 0) + (ac.baseLatency || 0);
+      return anchor.scoreT + Math.max(0, ac.currentTime - anchor.ctxT - latency);
+    },
+    /**
+     * A fresh MediaStream carrying the mix, for recording alongside the canvas.
+     * Returns { stream, release } or null before unlock().
+     */
+    captureStream() {
+      if (!ac || typeof ac.createMediaStreamDestination !== 'function') return null;
+      const dest = ac.createMediaStreamDestination();
+      bus.output.connect(dest);
+      return {
+        stream: dest.stream,
+        release() {
+          try {
+            bus.output.disconnect(dest);
+          } catch {
+            // already disconnected
+          }
+        },
+      };
+    },
   };
 }

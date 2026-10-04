@@ -27,11 +27,19 @@ export function recordingSupport(canvas) {
  * Start capturing `canvas`. Returns { done, pause, resume, stop }: `done`
  * resolves with the recorded Blob once stop() has flushed the last chunk.
  */
-export function startRecording(canvas, { mime, fps = 60, bitrate = 12e6 } = {}) {
+export function startRecording(canvas, { mime, fps = 60, bitrate = 12e6, audio = null } = {}) {
   const stream = canvas.captureStream(fps);
+  // With sound on, the soundtrack rides along as an Opus/AAC track.
+  let type = mime;
+  if (audio) {
+    audio.getAudioTracks().forEach((track) => stream.addTrack(track));
+    const withAudio = mime.startsWith('video/webm') ? `${mime.split(';')[0]};codecs=${mime.includes('vp8') ? 'vp8' : 'vp9'},opus` : mime;
+    if (MediaRecorder.isTypeSupported(withAudio)) type = withAudio;
+    else if (MediaRecorder.isTypeSupported(mime.split(';')[0])) type = mime.split(';')[0];
+  }
   let recorder;
   try {
-    recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: bitrate });
+    recorder = new MediaRecorder(stream, { mimeType: type, videoBitsPerSecond: bitrate, audioBitsPerSecond: 160e3 });
   } catch (err) {
     stream.getTracks().forEach((track) => track.stop());
     throw err;

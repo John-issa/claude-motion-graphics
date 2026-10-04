@@ -38,6 +38,7 @@ export function validateScene(scene) {
   if (typeof scene.render !== 'function') problems.push('render(ctx, s) is required');
   if (scene.setup !== undefined && typeof scene.setup !== 'function') problems.push('setup must be a function');
   if (scene.cues !== undefined && typeof scene.cues !== 'function') problems.push('cues must be a function');
+  if (scene.uses !== undefined && !(Array.isArray(scene.uses) && scene.uses.every((u) => typeof u === 'string'))) problems.push("uses must list input names, e.g. ['title', 'seed']");
   if (scene.color !== undefined && !/^#[0-9a-f]{6}$/i.test(scene.color)) problems.push('color must be #rrggbb');
   if (scene.notes !== undefined && !(Array.isArray(scene.notes) && scene.notes.every((n) => typeof n === 'string'))) problems.push('notes must be strings');
   if (scene.transition !== undefined) {
@@ -187,10 +188,19 @@ export function createReel({ scenes, params = {}, seed = 1, fps = 60 } = {}) {
     }
   }
   let score = null;
-  const setupAll = () => {
-    entries.forEach(runSetup);
+  /**
+   * Re-run setup for scenes affected by the changed inputs. A scene that
+   * declares `uses` (e.g. ['title', 'seed']) is only set up again when one of
+   * those changes; a scene that doesn't declare it is always set up again.
+   */
+  const setupAll = (changed = null) => {
+    for (const e of entries) {
+      const uses = e.scene.uses;
+      if (!changed || !uses || uses.some((u) => changed.includes(u))) runSetup(e);
+    }
     score = null;
   };
+  let blurSamples = 0;
 
   /** Each scene's optional sound cues, mapped to global reel time. */
   function collectCues() {
@@ -254,6 +264,7 @@ export function createReel({ scenes, params = {}, seed = 1, fps = 60 } = {}) {
       gl,
       reel: meta,
       index: e.index,
+      motionBlur: blurSamples,
     };
     try {
       if (e.error) throw e.error;
@@ -425,11 +436,16 @@ export function createReel({ scenes, params = {}, seed = 1, fps = 60 } = {}) {
     const tmp = buffer('sub', w, h);
     const actx = acc.getContext('2d');
     const tctx = tmp.getContext('2d');
-    for (let k = 0; k < samples; k++) {
-      const offset = ((k + 0.5) / samples - 0.5) * shutter * (1 / fps);
-      draw(tctx, t + offset);
-      actx.globalAlpha = 1 / (k + 1);
-      actx.drawImage(tmp, 0, 0);
+    blurSamples = samples;
+    try {
+      for (let k = 0; k < samples; k++) {
+        const offset = ((k + 0.5) / samples - 0.5) * shutter * (1 / fps);
+        draw(tctx, t + offset);
+        actx.globalAlpha = 1 / (k + 1);
+        actx.drawImage(tmp, 0, 0);
+      }
+    } finally {
+      blurSamples = 0;
     }
     actx.globalAlpha = 1;
     ctx.save();
@@ -466,12 +482,14 @@ export function createReel({ scenes, params = {}, seed = 1, fps = 60 } = {}) {
       setupAll();
     },
     setParams(p) {
+      const changed = Object.keys(p).filter((k) => p[k] !== currentParams[k]);
       currentParams = { ...currentParams, ...p };
-      setupAll();
+      if (changed.length) setupAll(changed);
     },
     setSeed(s) {
+      if (s >>> 0 === currentSeed) return;
       currentSeed = s >>> 0;
-      setupAll();
+      setupAll(['seed']);
     },
     setGrain(on) {
       grainOn = !!on;

@@ -808,6 +808,7 @@ export default defineScene({
   ],
   // Crisp hairlines and small type: film grain would read as noise here.
   post: { grain: 0 },
+  uses: [], // setup reads only the reel timeline, never the title or seed
   setup({ reel }) {
     return buildLayout(reel);
   },

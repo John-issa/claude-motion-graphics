@@ -7,6 +7,7 @@ import { createTimeline, transitionName } from './timeline.js';
 import { savePrefs } from './storage.js';
 import { recordingSupport, startRecording, saveBlob } from './recorder.js';
 import { DEFAULT_PARAMS } from '../engine/index.js';
+import { createSound } from './sound.js';
 
 const DEFAULT_TITLE = DEFAULT_PARAMS.title;
 const TITLE_MAX = 24;
@@ -27,7 +28,7 @@ const QUALITIES = ['auto', 'full', 'draft'];
 const CHROME_AIR = 20;
 // Keys that keep acting while held down; the toggles fire once per press.
 const REPEATING_KEYS = new Set(['ArrowLeft', 'ArrowRight', 'j', 'J', 'l', 'L']);
-const SHORTCUT_KEYS = new Set([' ', 'k', 'K', 'j', 'J', 'l', 'L', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'g', 'G', 'b', 'B', 'f', 'F']);
+const SHORTCUT_KEYS = new Set([' ', 'k', 'K', 'j', 'J', 'l', 'L', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'g', 'G', 'b', 'B', 'f', 'F', 's', 'S']);
 
 const isTypingTarget = (node) => {
   if (!node || !(node instanceof Element)) return false;
@@ -93,6 +94,7 @@ export function createPlayer({ reel, target = 'dev', prefs = {} }) {
     fwd: $('btn-fwd'),
     next: $('btn-next'),
     loop: $('btn-loop'),
+    sound: $('btn-sound'),
     blur: $('btn-blur'),
     guidesBtn: $('btn-guides'),
     fs: $('btn-fs'),
@@ -157,6 +159,7 @@ export function createPlayer({ reel, target = 'dev', prefs = {} }) {
     scrubbing: false,
   };
   let rec = null;
+  const sound = createSound(reel);
   let dirty = true;
   let raf = 0;
   let lastNow = 0;
@@ -341,10 +344,14 @@ export function createPlayer({ reel, target = 'dev', prefs = {} }) {
       // so it only guards against long stalls.
       const dt = lastNow ? Math.min(rec ? 1 : 0.25, (now - lastNow) / 1000) : 0;
       lastNow = now;
-      if (dt > 0) {
-        perf.intervals.push(dt);
-        advance(dt * (rec ? 1 : state.speed));
-      }
+      if (dt > 0) perf.intervals.push(dt);
+      // With sound on, the audio clock leads and the picture follows it, so
+      // slow frames drop instead of drifting out of sync. Otherwise (and while
+      // recording, which runs on wall-clock time) advance by the frame step.
+      const heard = rec ? null : sound.clock();
+      if (heard !== null && heard >= state.t - 0.25) advance(Math.max(0, heard - state.t));
+      else if (dt > 0) advance(dt * (rec ? 1 : state.speed));
+      followSound();
       perf.count++;
       dirty = true;
       adaptQuality(now);
@@ -420,7 +427,17 @@ export function createPlayer({ reel, target = 'dev', prefs = {} }) {
   function afterRebuild() {
     lastNow = 0;
     dirty = true;
+    sound.restart(state.t);
     request();
+  }
+
+  function followSound() {
+    sound.follow({ t: state.t, playing: state.playing, speed: state.speed, recording: !!rec });
+  }
+
+  async function toggleSound() {
+    await sound.setEnabled(!sound.enabled);
+    reflect();
   }
 
   /**
@@ -585,6 +602,8 @@ export function createPlayer({ reel, target = 'dev', prefs = {} }) {
     el.stagePlay.setAttribute('aria-label', stageLabel);
     el.stagePlay.title = `${stageLabel} (Space or K)`;
     el.loop.setAttribute('aria-pressed', String(state.loop));
+    el.sound.setAttribute('aria-pressed', String(sound.enabled));
+    followSound();
     el.blur.setAttribute('aria-pressed', String(state.blur));
     el.guidesBtn.setAttribute('aria-pressed', String(state.guides));
     el.guides.hidden = !state.guides;
@@ -870,7 +889,8 @@ export function createPlayer({ reel, target = 'dev', prefs = {} }) {
     state.t = 0;
     draw();
     try {
-      rec.session = startRecording(el.canvas, { mime: support.mime, fps });
+      rec.audio = sound.captureStream();
+      rec.session = startRecording(el.canvas, { mime: support.mime, fps, audio: rec.audio ? rec.audio.stream : null });
     } catch (err) {
       endRecording();
       setRecStatus(`Recording could not start: ${err && err.message ? err.message : err}.`);
@@ -933,6 +953,7 @@ export function createPlayer({ reel, target = 'dev', prefs = {} }) {
   function endRecording() {
     const run = rec;
     rec = null;
+    if (run && run.audio) run.audio.release();
     app.dataset.recording = 'false';
     el.recText.textContent = recLabel;
     el.recProgress.hidden = true;
@@ -991,6 +1012,8 @@ export function createPlayer({ reel, target = 'dev', prefs = {} }) {
   el.back.addEventListener('click', () => stepFrames(-1));
   el.fwd.addEventListener('click', () => stepFrames(1));
   el.loop.addEventListener('click', () => setLoop(!state.loop));
+  if (!sound.available) el.sound.hidden = true;
+  el.sound.addEventListener('click', toggleSound);
   el.blur.addEventListener('click', () => setBlur(!state.blur));
   el.guidesBtn.addEventListener('click', () => setGuides(!state.guides));
   el.fs.addEventListener('click', toggleFullscreen);
@@ -1083,6 +1106,10 @@ export function createPlayer({ reel, target = 'dev', prefs = {} }) {
       case 'b':
       case 'B':
         setBlur(!state.blur);
+        break;
+      case 's':
+      case 'S':
+        if (!el.sound.hidden) toggleSound();
         break;
       case 'f':
       case 'F':

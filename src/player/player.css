@@ -678,12 +678,17 @@ code {
 
   .t-right {
     width: 100%;
+    flex-wrap: wrap;
     justify-content: space-between;
+    row-gap: 6px;
     padding-top: 8px;
     border-top: 1px solid var(--line);
   }
 
+  /* When the speed switch and the toggles don't fit side by side, the
+     toggles take their own line, still aligned right. */
   .t-toggles {
+    margin-left: auto;
     padding-left: 0;
     border-left: 0;
   }
@@ -1780,3 +1785,8 @@ kbd {
     animation: none;
   }
 }
+
+/* Sound toggle: waves when on, a cross when off. */
+#btn-sound .i-wave { display: none; }
+#btn-sound[aria-pressed="true"] .i-wave { display: inline; }
+#btn-sound[aria-pressed="true"] .i-mute { display: none; }
